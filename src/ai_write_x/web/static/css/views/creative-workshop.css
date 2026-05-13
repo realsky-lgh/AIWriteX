@@ -839,7 +839,31 @@
     box-shadow: 0 6px 20px rgba(37, 99, 235, 0.3);  
 }  
   
-[data-theme="dark"] .spinner {  
-    border-color: rgba(255, 255, 255, 0.1);  
-    border-top-color: var(--primary-color);  
+.image-count-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-right: 8px;
+}
+
+.image-count-group .panel-icon {
+    width: 16px;
+    height: 16px;
+    opacity: 0.6;
+}
+
+.image-count-input {
+    width: 44px;
+    height: 28px;
+    border: 1px solid var(--border-color, #ddd);
+    border-radius: 6px;
+    text-align: center;
+    font-size: 13px;
+    background: var(--input-bg, #fff);
+    color: var(--text-color, #333);
+}
+
+[data-theme="dark"] .spinner {
+    border-color: rgba(255, 255, 255, 0.1);
+    border-top-color: var(--primary-color);
 }

@@ -232,6 +232,12 @@ class Config:
                 "ali": {"api_key": "", "model": "wanx2.0-t2i-turbo"},
                 "picsum": {"api_key": "", "model": ""},
             },
+            "image_search": {
+                "enabled": False,
+                "access_key": "",
+                "count": 2,
+                "keyword": "",
+            },
             "use_template": True,
             "template_category": "",
             "template": "",
@@ -1592,6 +1598,34 @@ class Config:
             if not self.config:
                 raise ValueError("配置未加载")
             return self.config["img_api"][self.config["img_api"]["api_type"]]["model"]
+
+    @property
+    def image_search_enabled(self):
+        with self._lock:
+            if not self.config:
+                raise ValueError("配置未加载")
+            return self.config.get("image_search", {}).get("enabled", False)
+
+    @property
+    def image_search_access_key(self):
+        with self._lock:
+            if not self.config:
+                raise ValueError("配置未加载")
+            return self.config.get("image_search", {}).get("access_key", "")
+
+    @property
+    def image_search_count(self):
+        with self._lock:
+            if not self.config:
+                raise ValueError("配置未加载")
+            return self.config.get("image_search", {}).get("count", 2)
+
+    @property
+    def image_search_keyword(self):
+        with self._lock:
+            if not self.config:
+                raise ValueError("配置未加载")
+            return self.config.get("image_search", {}).get("keyword", "")
 
     @property
     def use_template(self):

@@ -335,12 +335,23 @@ class AIWriteXConfigManager {
             });  
         }  
         
-        // 最大文章字数  
-        const maxArticleLenInput = document.getElementById('max-article-len');  
-        if (maxArticleLenInput) {  
-            maxArticleLenInput.addEventListener('change', async (e) => {  
-                await this.updateConfig({ max_article_len: parseInt(e.target.value) });  
-            });  
+        // 最大文章字数
+        const maxArticleLenInput = document.getElementById('max-article-len');
+        if (maxArticleLenInput) {
+            maxArticleLenInput.addEventListener('change', async (e) => {
+                await this.updateConfig({ max_article_len: parseInt(e.target.value) });
+            });
+        }
+
+        // 搜图数量（基础设置）
+        const imageSearchCountBase = document.getElementById('image-search-count-base');
+        if (imageSearchCountBase) {
+            imageSearchCountBase.addEventListener('change', async (e) => {
+                const current = this.config.image_search || {};
+                await this.updateConfig({
+                    image_search: { ...current, count: parseInt(e.target.value) || 0 }
+                });
+            });
         }
 
         // ========== 热搜平台设置事件绑定 ==========  
@@ -1127,11 +1138,18 @@ class AIWriteXConfigManager {
             minArticleLenInput.value = this.config.min_article_len;  
         }  
         
-        const maxArticleLenInput = document.getElementById('max-article-len');  
-        if (maxArticleLenInput && this.config.max_article_len !== undefined) {  
-            maxArticleLenInput.value = this.config.max_article_len;  
-        }  
-        
+        const maxArticleLenInput = document.getElementById('max-article-len');
+        if (maxArticleLenInput && this.config.max_article_len !== undefined) {
+            maxArticleLenInput.value = this.config.max_article_len;
+        }
+
+        // 搜图数量（基础设置）
+        const imageSearchCountBase = document.getElementById('image-search-count-base');
+        if (imageSearchCountBase) {
+            const imageSearchConfig = this.config.image_search || {};
+            imageSearchCountBase.value = imageSearchConfig.count !== undefined ? imageSearchConfig.count : 2;
+        }
+
         // ========== 8. 填充界面配置 ==========  
         const themeSelector = document.getElementById('theme-selector');  
         if (themeSelector) {  
@@ -3134,11 +3152,39 @@ class AIWriteXConfigManager {
             }  
             if (customInput) {  
                 const selectValue = select?.value;  
-                customInput.disabled = !globalEnabled || !isEnabled || selectValue !== 'custom';  
-            }  
-        });  
+                customInput.disabled = !globalEnabled || !isEnabled || selectValue !== 'custom';
+            }
+        });
 
-        this.updateCreativeControlsState(); 
+        // 填充图片搜索配置
+        const imageSearchConfig = this.config.image_search || {};
+        const isEnabledEl = document.getElementById('image-search-enabled');
+        const accessKeyEl = document.getElementById('image-search-access-key');
+        const countEl = document.getElementById('image-search-count');
+        const keywordEl = document.getElementById('image-search-keyword');
+
+        if (isEnabledEl) isEnabledEl.checked = imageSearchConfig.enabled || false;
+        if (accessKeyEl) accessKeyEl.value = imageSearchConfig.access_key || '';
+        if (countEl) countEl.value = imageSearchConfig.count || 2;
+        if (keywordEl) keywordEl.value = imageSearchConfig.keyword || '';
+
+        // 绑定变化事件
+        [isEnabledEl, accessKeyEl, countEl, keywordEl].forEach(el => {
+            if (el) {
+                el.addEventListener('change', async () => {
+                    await this.updateConfig({
+                        image_search: {
+                            enabled: isEnabledEl?.checked || false,
+                            access_key: accessKeyEl?.value || '',
+                            count: parseInt(countEl?.value) || 0,
+                            keyword: keywordEl?.value || ''
+                        }
+                    });
+                });
+            }
+        });
+
+        this.updateCreativeControlsState();
     }
 
     // 生成维度分组卡片  

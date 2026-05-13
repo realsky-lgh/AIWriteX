@@ -101,40 +101,48 @@
             </div>  
         </div>
   
-        <!-- 生成设置区块 -->  
-        <div class="config-section">  
-            <h3 class="section-title">  
-                生成设置  
-            </h3>  
-            <div class="form-row">  
-                <div class="form-group form-group-quarter">  
-                    <label for="max-search-results">最大搜索数量</label>  
-                    <input type="number" id="max-search-results" class="form-control"   
-                           min="1" max="20" value="10">  
-                    <small class="form-help">AIForge返回的最大搜索结果数（1-20）</small>  
-                </div>  
-                  
-                <div class="form-group form-group-quarter">  
-                    <label for="min-search-results">最小搜索数量</label>  
-                    <input type="number" id="min-search-results" class="form-control"   
-                           min="1" max="10" value="3">  
-                    <small class="form-help">AIForge返回的最小搜索结果数（1-10）</small>  
-                </div>  
-                  
-                <div class="form-group form-group-quarter">  
-                    <label for="min-article-len">最小文章字数</label>  
-                    <input type="number" id="min-article-len" class="form-control"   
-                           min="500" value="800">  
-                    <small class="form-help">生成文章的最小字数</small>  
-                </div>  
-                  
-                <div class="form-group form-group-quarter">  
-                    <label for="max-article-len">最大文章字数</label>  
-                    <input type="number" id="max-article-len" class="form-control"   
-                           max="5000" value="2000">  
-                    <small class="form-help">生成文章的最大字数</small>  
-                </div>  
-            </div>  
+        <!-- 生成设置区块 -->
+        <div class="config-section">
+            <h3 class="section-title">
+                生成设置
+            </h3>
+            <div class="form-row">
+                <div class="form-group form-group-quarter">
+                    <label for="max-search-results">最大搜索数量</label>
+                    <input type="number" id="max-search-results" class="form-control"
+                           min="1" max="20" value="10">
+                    <small class="form-help">AIForge返回的最大搜索结果数（1-20）</small>
+                </div>
+
+                <div class="form-group form-group-quarter">
+                    <label for="min-search-results">最小搜索数量</label>
+                    <input type="number" id="min-search-results" class="form-control"
+                           min="1" max="10" value="3">
+                    <small class="form-help">AIForge返回的最小搜索结果数（1-10）</small>
+                </div>
+
+                <div class="form-group form-group-quarter">
+                    <label for="min-article-len">最小文章字数</label>
+                    <input type="number" id="min-article-len" class="form-control"
+                           min="500" value="800">
+                    <small class="form-help">生成文章的最小字数</small>
+                </div>
+
+                <div class="form-group form-group-quarter">
+                    <label for="max-article-len">最大文章字数</label>
+                    <input type="number" id="max-article-len" class="form-control"
+                           max="5000" value="2000">
+                    <small class="form-help">生成文章的最大字数</small>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group form-group-quarter">
+                    <label for="image-search-count-base">搜图数量</label>
+                    <input type="number" id="image-search-count-base" class="form-control"
+                           min="0" max="10" value="2">
+                    <small class="form-help">每篇文章自动搜索的配图数量（0=不配图，需配置Unsplash Key）</small>
+                </div>
+            </div>
         </div>  
     </div>  
       

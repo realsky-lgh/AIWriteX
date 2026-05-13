@@ -124,6 +124,7 @@ def run(inputs):
             "platform": inputs.get("platform", ""),
             "urls": inputs.get("urls", []),
             "reference_ratio": inputs.get("reference_ratio", 0.0),
+            "image_count": inputs.get("image_count"),
         }
 
         topics = inputs.get("topics", [])
@@ -176,6 +177,9 @@ def ai_write_x_run(config_data=None):
 
     if config_data and config_data.get("topics"):
         inputs["topics"] = config_data["topics"]
+
+    if config_data and config_data.get("image_count") is not None:
+        inputs["image_count"] = config_data["image_count"]
 
     if config_data:
         try:

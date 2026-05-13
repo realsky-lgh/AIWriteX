@@ -48,6 +48,7 @@ async def get_config():
             "article_format": config_dict.get("article_format", "html"),
             "format_publish": config_dict.get("format_publish", True),
             "dimensional_creative": config_dict.get("dimensional_creative", {}),
+            "image_search": config_dict.get("image_search", {}),
             "aiforge_config": config.aiforge_config,
             "page_design": config_dict.get("page_design"),
         }

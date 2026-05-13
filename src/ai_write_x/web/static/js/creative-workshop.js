@@ -471,6 +471,14 @@ class CreativeWorkshopManager {
                 platform: this._hotSearchPlatform || '',
                 reference: referenceConfig
             };
+
+            const imageCountInput = document.getElementById('image-count-input');
+            if (imageCountInput) {
+                const imageCount = parseInt(imageCountInput.value) || 0;
+                if (imageCount > 0) {
+                    requestBody.image_count = imageCount;
+                }
+            }
             if (this.isBatchMode && topics.length > 1) {
                 requestBody.topics = topics;
             }

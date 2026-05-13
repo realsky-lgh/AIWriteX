@@ -1,6 +1,7 @@
 import os
 import time
 import re
+from pathlib import Path
 from typing import Dict, Any, List
 
 from src.ai_write_x.core.base_framework import (
@@ -157,6 +158,10 @@ class UnifiedContentWorkflow:
             final_content = self._apply_dimensional_creative_transformation(base_content, **kwargs)
             log.print_log("[PROGRESS:CREATIVE:END]", "internal")
 
+            # 2.5. 搜索配图（配置开关控制）
+            image_urls = self._fetch_images(title, **kwargs)
+            kwargs["image_urls"] = image_urls
+
             # 3. 转换处理（template或design）
 
             transform_content = self._transform_content(final_content, publish_platform, **kwargs)
@@ -308,6 +313,44 @@ class UnifiedContentWorkflow:
             log.print_log(f"维度化创意变换失败: {str(e)}", "error")
             return base_content
 
+    def _fetch_images(self, topic: str, **kwargs) -> list:
+        """根据文章主题搜索配图，返回图片路径列表"""
+        config = Config.get_instance()
+        if not config.image_search_enabled:
+            return []
+
+        access_key = config.image_search_access_key
+        if not access_key:
+            log.print_log("未配置 Unsplash Access Key，跳过图片搜索", "warning")
+            return []
+
+        count = kwargs.get("image_count") or config.image_search_count
+        if count <= 0:
+            return []
+
+        try:
+            from src.ai_write_x.tools.image_search import ImageSearchTool
+
+            keyword = config.image_search_keyword or topic.split("|")[-1].strip()
+            searcher = ImageSearchTool(access_key)
+            results = searcher.search(keyword, count)
+
+            image_dir = PathManager.get_image_dir()
+            local_paths = []
+            for r in results:
+                path = searcher.download_image(r["url"], str(image_dir))
+                if path:
+                    filename = Path(path).name
+                    local_paths.append(f"/images/{filename}")
+
+            if local_paths:
+                log.print_log(f"配图搜索完成：{len(local_paths)}/{count} 张")
+            return local_paths
+
+        except Exception as e:
+            log.print_log(f"配图搜索异常: {e}", "error")
+            return []
+
     def _strip_ai_artifacts(self, result: ContentResult) -> ContentResult:
         """清理AI输出中残留的思考过程、适配说明等元描述文字"""
         if not result or not result.content:
@@ -398,6 +441,12 @@ class UnifiedContentWorkflow:
     * 严禁在文章末尾或任何位置添加"适配说明"、"修改说明"、注释、思考过程或任何形式的元描述文字
     * 最终输出必须是纯净的HTML文章内容，不含任何额外说明"""
 
+            # 注入配图URL
+            image_urls = kwargs.get("image_urls", [])
+            if image_urls:
+                image_list = "\n".join(f"  - {url}" for url in image_urls)
+                task_description += f"\n\n## 可用配图（已按主题搜索，请替换模板中原有图片）\n{image_list}"
+
             backstory = "你是微信公众号模板处理专家，能够将内容适配到HTML模板中。严格按照以下要求：保持<section>标签的布局结构和内联样式不变、保持原有的视觉层次、色彩方案和排版风格、不可使用模板中的任何日期作为新文章的日期"  # noqa 501
         else:
             # 其他平台的简化模板处理
@@ -459,7 +508,7 @@ class UnifiedContentWorkflow:
     - 内联样式：所有样式和字体都通过style属性直接应用在<section>这个HTML元素上，其他都没有style,包括body
     - 模块化：使用<section>标签包裹不同内容模块
     - 简单交互：用HTML原生属性实现微动效
-    - 图片处理：非必要不使用配图，若必须配图且又找不到有效图片链接时，使用https://picsum.photos/[宽度]/[高度]?random=1随机一张
+    - 图片处理：系统已搜索与主题相关的配图（见任务描述中的图片URL列表），请合理插入到文章合适位置，大图展示+圆角阴影，每张图至少用一次
     - SVG：生成炫酷SVG动画，目的是方便理解或给用户小惊喜
     - SVG图标：采用Material Design风格的现代简洁图标，支持容器式和内联式两种展示方式
     - 只基于核心主题内容生成，不包含作者，版权，相关URL等信息
@@ -499,10 +548,16 @@ class UnifiedContentWorkflow:
             )
         ]
 
+        image_urls = kwargs.get("image_urls", [])
+        image_hint = ""
+        if image_urls:
+            image_list = "\n".join(f"  - {url}" for url in image_urls)
+            image_hint = f"\n\n## 可用配图（已按主题搜索，请合理插入）\n{image_list}"
+
         tasks = [
             TaskConfig(
                 name="design_content",
-                description=f"为{publish_platform}平台设计HTML排版。{design_requirement}。创建精美的HTML格式，包含适当的标题层次、段落间距、颜色搭配和视觉元素，确保内容在{publish_platform}平台上有最佳的展示效果。",  # noqa 501
+                description=f"为{publish_platform}平台设计HTML排版。{design_requirement}。创建精美的HTML格式，包含适当的标题层次、段落间距、颜色搭配和视觉元素，确保内容在{publish_platform}平台上有最佳的展示效果。{image_hint}",  # noqa 501
                 agent_name="designer",
                 expected_output=f"针对{publish_platform}平台优化的精美HTML内容，严禁包含适配说明、思考过程、Thought或任何额外注释文字",
             )

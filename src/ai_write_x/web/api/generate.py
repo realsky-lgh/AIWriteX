@@ -41,6 +41,7 @@ class GenerateRequest(BaseModel):
     platform: Optional[str] = ""
     reference: Optional[ReferenceConfig] = None
     draft_only: bool = False
+    image_count: Optional[int] = None
 
 
 @router.get("/config/validate")
@@ -110,6 +111,9 @@ async def generate_content(request: GenerateRequest):
 
         if request.topics:
             config_data["topics"] = [t.strip() for t in request.topics if t.strip()]
+
+        if request.image_count is not None:
+            config_data["image_count"] = request.image_count
 
         # 如果启用借鉴模式,覆盖默认值
         if request.reference:

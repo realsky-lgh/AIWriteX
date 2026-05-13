@@ -84,7 +84,44 @@
             </div>  
         </div>  
           
-        <!-- ========== 维度分组卡片容器 ========== -->  
+        <!-- ========== 图片搜索配图配置 ========== -->
+        <div class="config-section">
+            <h3 class="section-title">
+                图片搜索配图
+            </h3>
+            <div class="form-row">
+                <div class="form-group form-group-third">
+                    <label class="checkbox-label">
+                        <input type="checkbox" id="image-search-enabled">
+                        <span class="checkbox-custom"></span>
+                        启用图片搜索
+                    </label>
+                    <small class="form-help">通过Unsplash自动搜索与主题相关的配图</small>
+                </div>
+                <div class="form-group form-group-third">
+                    <label for="image-search-access-key">Unsplash Access Key</label>
+                    <input type="text" id="image-search-access-key" class="form-control"
+                           placeholder="输入Unsplash Access Key">
+                    <small class="form-help"><a href="https://unsplash.com/developers" target="_blank">注册获取</a></small>
+                </div>
+                <div class="form-group form-group-third">
+                    <label for="image-search-count">配图数量</label>
+                    <input type="number" id="image-search-count" class="form-control"
+                           min="0" max="10" value="2">
+                    <small class="form-help">每篇文章搜索的图片数量（0-10）</small>
+                </div>
+            </div>
+            <div class="form-row">
+                <div class="form-group">
+                    <label for="image-search-keyword">搜索关键词（可选）</label>
+                    <input type="text" id="image-search-keyword" class="form-control"
+                           placeholder="留空则自动从文章主题提取关键词">
+                    <small class="form-help">固定搜索关键词，留空则根据每篇文章主题自动提取</small>
+                </div>
+            </div>
+        </div>
+
+        <!-- ========== 维度分组卡片容器 ========== -->
         <div id="dimension-groups-container">  
             <!-- 动态生成5个维度分组卡片 -->  
         </div>  

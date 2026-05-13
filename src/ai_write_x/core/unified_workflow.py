@@ -1,5 +1,6 @@
 import os
 import time
+import re
 from typing import Dict, Any, List
 
 from src.ai_write_x.core.base_framework import (
@@ -220,7 +221,6 @@ class UnifiedContentWorkflow:
 
     def _apply_template_formatting(self, content: ContentResult, **kwargs) -> ContentResult:
         """Template路径：使用AI填充本地模板"""
-        # 创建专门的模板处理工作流
         log.print_log("[PROGRESS:TEMPLATE:START]", "internal")
 
         template_config = self._get_template_workflow_config(**kwargs)
@@ -235,6 +235,7 @@ class UnifiedContentWorkflow:
         }
 
         ret = engine.execute_workflow(input_data)
+        ret = self._strip_ai_artifacts(ret)
         log.print_log("[PROGRESS:TEMPLATE:END]", "internal")
 
         return ret
@@ -243,7 +244,6 @@ class UnifiedContentWorkflow:
         self, content: ContentResult, publish_platform: str, **kwargs
     ) -> ContentResult:
         """Design路径：使用AI生成HTML设计"""
-        # 创建专门的设计工作流
         log.print_log("[PROGRESS:DESIGN:START]", "internal")
 
         design_config = self._get_design_workflow_config(publish_platform, **kwargs)
@@ -259,6 +259,7 @@ class UnifiedContentWorkflow:
         }
 
         ret = engine.execute_workflow(input_data)
+        ret = self._strip_ai_artifacts(ret)
         log.print_log("[PROGRESS:DESIGN:END]", "internal")
 
         return ret
@@ -307,6 +308,45 @@ class UnifiedContentWorkflow:
             log.print_log(f"维度化创意变换失败: {str(e)}", "error")
             return base_content
 
+    def _strip_ai_artifacts(self, result: ContentResult) -> ContentResult:
+        """清理AI输出中残留的思考过程、适配说明等元描述文字"""
+        if not result or not result.content:
+            return result
+
+        content = result.content
+
+        # 移除HTML标签之前的AI规划/分析文本
+        html_match = re.search(
+            r'(<!DOCTYPE|<html|<section|<div|<body|<article|<head|<style)',
+            content, re.IGNORECASE
+        )
+        if html_match:
+            content = content[html_match.start():]
+
+        # 移除 "Thought:" / "Thought：" 开头的思考块
+        content = re.sub(
+            r'Thought[：:]\s*[^\n]*(\n|$)', '', content, flags=re.IGNORECASE
+        )
+
+        # 移除 "**适配说明：**" 及其后续所有内容
+        content = re.sub(
+            r'\*\*适配说明[：:]\*\*[\s\S]*$', '', content
+        )
+
+        # 移除 "**修改说明：**" 及其后续所有内容
+        content = re.sub(
+            r'\*\*修改说明[：:]\*\*[\s\S]*$', '', content
+        )
+
+        # 移除 "现在开始编写完整的HTML" 等过渡语（单独成行）
+        content = re.sub(
+            r'^.*(现在开始编写|开始填充内容|让我开始适配|开始适配).*\n?', '',
+            content, flags=re.MULTILINE | re.IGNORECASE
+        )
+
+        result.content = content.strip()
+        return result
+
     def _get_template_workflow_config(
         self, publish_platform: str = PlatformType.WECHAT.value, **kwargs
     ) -> WorkflowConfig:
@@ -354,7 +394,9 @@ class UnifiedContentWorkflow:
 - 严格限制：
     * 不添加新的style标签或外部CSS
     * 不改变原有的色彩方案（限制在三种色系内）
-    * 不修改模板的整体视觉效果和布局结构"""
+    * 不修改模板的整体视觉效果和布局结构
+    * 严禁在文章末尾或任何位置添加"适配说明"、"修改说明"、注释、思考过程或任何形式的元描述文字
+    * 最终输出必须是纯净的HTML文章内容，不含任何额外说明"""
 
             backstory = "你是微信公众号模板处理专家，能够将内容适配到HTML模板中。严格按照以下要求：保持<section>标签的布局结构和内联样式不变、保持原有的视觉层次、色彩方案和排版风格、不可使用模板中的任何日期作为新文章的日期"  # noqa 501
         else:
@@ -377,7 +419,7 @@ class UnifiedContentWorkflow:
                 name="template_content",
                 description=task_description,
                 agent_name="templater",
-                expected_output="填充新内容但保持原有视觉风格的文章（HTML格式）",
+                expected_output="填充新内容但保持原有视觉风格的文章（HTML格式），严禁包含适配说明、思考过程、Thought或任何额外注释文字",
             )
         ]
 
@@ -462,7 +504,7 @@ class UnifiedContentWorkflow:
                 name="design_content",
                 description=f"为{publish_platform}平台设计HTML排版。{design_requirement}。创建精美的HTML格式，包含适当的标题层次、段落间距、颜色搭配和视觉元素，确保内容在{publish_platform}平台上有最佳的展示效果。",  # noqa 501
                 agent_name="designer",
-                expected_output=f"针对{publish_platform}平台优化的精美HTML内容",
+                expected_output=f"针对{publish_platform}平台优化的精美HTML内容，严禁包含适配说明、思考过程、Thought或任何额外注释文字",
             )
         ]
 
@@ -568,10 +610,7 @@ class UnifiedContentWorkflow:
 
 
 class BatchWorkflow:
-    """批量内容生成编排器 - 串行模式"""
-
-    def __init__(self):
-        self.single_workflow = UnifiedContentWorkflow()
+    """批量内容生成编排器 - 串行模式，每次迭代使用全新 workflow 实例避免状态污染"""
 
     def execute_batch(self, topics: List[str], **kwargs) -> Dict[str, Any]:
         results = []
@@ -582,7 +621,8 @@ class BatchWorkflow:
                 continue
             log.print_log(f"[PROGRESS:BATCH:{i+1}/{total}] 开始生成: {topic}", "internal")
             try:
-                result = self.single_workflow.execute(topic=topic, **kwargs)
+                workflow = UnifiedContentWorkflow()
+                result = workflow.execute(topic=topic, **kwargs)
                 result["topic"] = topic
                 result["index"] = i
                 results.append(result)

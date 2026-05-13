@@ -190,6 +190,17 @@ class WeChatAdapter(PlatformAdapter):
             author = credential.get("author", "")
 
             try:
+                cover_from_article = kwargs.get("cover_path", None)
+                # 构建代理配置
+                proxy = None
+                if credential.get("proxy_proto") and credential.get("proxy_addr") and credential.get("proxy_port"):
+                    proxy = {
+                        "proto": credential["proxy_proto"],
+                        "addr": credential["proxy_addr"],
+                        "port": credential["proxy_port"],
+                        "user": credential.get("proxy_user", ""),
+                        "pass": credential.get("proxy_pass", ""),
+                    }
                 result, _, success = pub2wx(
                     content_result.title,
                     content_result.summary,
@@ -197,7 +208,9 @@ class WeChatAdapter(PlatformAdapter):
                     appid,
                     appsecret,
                     author,
-                    cover_path=kwargs.get("cover_path", None),
+                    cover_path=cover_from_article,
+                    default_cover_path=credential.get("cover") if not cover_from_article else None,
+                    proxy=proxy,
                 )
 
                 publish_results.append(

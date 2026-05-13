@@ -1376,6 +1376,7 @@ class AIWriteXConfigManager {
     // 更新单个凭证配置
     async updateWeChatCredential(index) {
         const credentials = [...(this.config.wechat?.credentials || [])];
+        const existing = credentials[index] || {};
 
         const credential = {
             appid: document.getElementById(`wechat-appid-${index}`)?.value || '',
@@ -1385,7 +1386,13 @@ class AIWriteXConfigManager {
             draft_only: document.getElementById(`wechat-draft-only-${index}`)?.checked || false,
             call_sendall: document.getElementById(`wechat-call-sendall-${index}`)?.checked || false,
             sendall: document.getElementById(`wechat-sendall-${index}`)?.checked !== false,
-            tag_id: parseInt(document.getElementById(`wechat-tag-id-${index}`)?.value || 0)
+            tag_id: parseInt(document.getElementById(`wechat-tag-id-${index}`)?.value || 0),
+            cover: existing.cover || '',  // Preserve custom cover path
+            proxy_proto: document.getElementById(`wechat-proxy-proto-${index}`)?.value || '',
+            proxy_addr: document.getElementById(`wechat-proxy-addr-${index}`)?.value || '',
+            proxy_port: document.getElementById(`wechat-proxy-port-${index}`)?.value || '',
+            proxy_user: document.getElementById(`wechat-proxy-user-${index}`)?.value || '',
+            proxy_pass: document.getElementById(`wechat-proxy-pass-${index}`)?.value || ''
         };
 
         credentials[index] = credential;
@@ -1395,6 +1402,47 @@ class AIWriteXConfigManager {
         });
     }  
     
+    // 上传自定义封面图
+    async handleCoverUpload(index, fileInput) {
+        const file = fileInput.files[0];
+        if (!file) return;
+
+        const formData = new FormData();
+        formData.append('file', file);
+
+        try {
+            const response = await fetch('/api/config/upload-cover', {
+                method: 'POST',
+                body: formData
+            });
+            const data = await response.json();
+            if (data.status === 'success' && data.path) {
+                // 更新凭证中的封面路径
+                const credentials = [...(this.config.wechat?.credentials || [])];
+                credentials[index] = { ...credentials[index], cover: data.path };
+                await this.updateConfig({ wechat: { credentials } });
+
+                // 显示预览
+                const preview = document.getElementById(`wechat-cover-preview-${index}`);
+                if (preview) {
+                    preview.src = '/assets/' + data.path;
+                    preview.style.display = 'block';
+                }
+            } else {
+                window.app?.showNotification(data.detail || '封面上传失败', 'error');
+            }
+        } catch (e) {
+            window.app?.showNotification('封面上传失败: ' + e.message, 'error');
+        }
+    }
+
+    // 移除自定义封面图
+    async removeCoverImage(index) {
+        const credentials = [...(this.config.wechat?.credentials || [])];
+        credentials[index] = { ...credentials[index], cover: '' };
+        await this.updateConfig({ wechat: { credentials } });
+    }
+
     // 添加新凭证
     addWeChatCredential() {
         const credentials = [...(this.config.wechat?.credentials || [])];
@@ -1408,7 +1456,13 @@ class AIWriteXConfigManager {
             draft_only: false,
             call_sendall: false,
             sendall: true,
-            tag_id: 0
+            tag_id: 0,
+            cover: '',
+            proxy_proto: '',
+            proxy_addr: '',
+            proxy_port: '',
+            proxy_user: '',
+            proxy_pass: ''
         });  
         
         // 更新配置  
@@ -1693,17 +1747,149 @@ class AIWriteXConfigManager {
         sendallOptionsDiv.appendChild(sendallGroup);  
         sendallOptionsDiv.appendChild(tagIdGroup);  
         
-        row2.appendChild(sendallOptionsDiv);  
-        
-        // 组装表单  
-        form.appendChild(row1);  
-        form.appendChild(row2);  
-        
-        // 组装卡片  
-        card.appendChild(header);  
-        card.appendChild(form);  
-        
-        return card;  
+        row2.appendChild(sendallOptionsDiv);
+
+        // 行3: 默认封面图上传
+        const row3 = document.createElement('div');
+        row3.className = 'form-row';
+
+        const coverGroup = document.createElement('div');
+        coverGroup.className = 'form-group';
+
+        const coverLabel = document.createElement('label');
+        coverLabel.textContent = '默认封面图';
+        coverLabel.style.display = 'block';
+        coverLabel.style.marginBottom = '6px';
+
+        const coverInputRow = document.createElement('div');
+        coverInputRow.style.cssText = 'display:flex;align-items:center;gap:8px;';
+
+        const coverFileInput = document.createElement('input');
+        coverFileInput.type = 'file';
+        coverFileInput.id = `wechat-cover-${index}`;
+        coverFileInput.accept = 'image/jpeg,image/png,image/webp,image/gif';
+        coverFileInput.style.cssText = 'flex:1;';
+        coverFileInput.addEventListener('change', async () => {
+            await this.handleCoverUpload(index, coverFileInput);
+        });
+
+        const coverPreview = document.createElement('img');
+        coverPreview.id = `wechat-cover-preview-${index}`;
+        coverPreview.style.cssText = 'width:80px;height:34px;object-fit:cover;border-radius:4px;border:1px solid #ddd;display:none;';
+
+        if (credential.cover) {
+            coverPreview.src = '/assets/' + credential.cover;
+            coverPreview.style.display = 'block';
+        }
+
+        const coverRemoveBtn = document.createElement('button');
+        coverRemoveBtn.type = 'button';
+        coverRemoveBtn.className = 'btn btn-secondary';
+        coverRemoveBtn.textContent = '移除';
+        coverRemoveBtn.style.cssText = 'font-size:12px;padding:2px 8px;white-space:nowrap;';
+        coverRemoveBtn.addEventListener('click', async () => {
+            await this.removeCoverImage(index);
+            coverFileInput.value = '';
+            coverPreview.style.display = 'none';
+            coverPreview.src = '';
+        });
+
+        coverInputRow.appendChild(coverFileInput);
+        coverInputRow.appendChild(coverPreview);
+        coverInputRow.appendChild(coverRemoveBtn);
+
+        coverGroup.appendChild(coverLabel);
+        coverGroup.appendChild(coverInputRow);
+        row3.appendChild(coverGroup);
+
+        // 行4: 代理设置
+        const row4 = document.createElement('div');
+        row4.className = 'form-row';
+        row4.style.cssText = 'align-items:flex-end;';
+
+        const protoGroup = document.createElement('div');
+        protoGroup.className = 'form-group';
+        protoGroup.style.cssText = 'flex:0 0 90px;';
+        const protoLabel = document.createElement('label');
+        protoLabel.textContent = '代理协议';
+        protoLabel.style.fontSize = '11px';
+        const protoSelect = document.createElement('select');
+        protoSelect.id = `wechat-proxy-proto-${index}`;
+        protoSelect.className = 'form-control';
+        protoSelect.style.cssText = 'font-size:12px;padding:2px 4px;';
+        ['', 'http', 'https', 'socks5'].forEach(v => {
+            const opt = document.createElement('option');
+            opt.value = v;
+            opt.textContent = v || '无代理';
+            if ((credential.proxy_proto || '') === v) opt.selected = true;
+            protoSelect.appendChild(opt);
+        });
+        protoSelect.addEventListener('change', async () => {
+            await this.updateWeChatCredential(index);
+        });
+        protoGroup.appendChild(protoLabel);
+        protoGroup.appendChild(protoSelect);
+
+        const addrGroup = this.createFormGroup(
+            '代理地址', 'text',
+            `wechat-proxy-addr-${index}`,
+            credential.proxy_addr || '',
+            '如 127.0.0.1'
+        );
+        addrGroup.classList.add('form-group-half');
+
+        const portGroup = this.createFormGroup(
+            '端口', 'text',
+            `wechat-proxy-port-${index}`,
+            credential.proxy_port || '',
+            '如 1080'
+        );
+        portGroup.classList.add('form-group-third');
+
+        const userGroup = this.createFormGroup(
+            '代理账号', 'text',
+            `wechat-proxy-user-${index}`,
+            credential.proxy_user || '',
+            '选填'
+        );
+        userGroup.classList.add('form-group-quarter');
+
+        const passGroup = this.createFormGroup(
+            '代理密码', 'password',
+            `wechat-proxy-pass-${index}`,
+            credential.proxy_pass || '',
+            '选填'
+        );
+        passGroup.classList.add('form-group-quarter');
+
+        [protoSelect, ...addrGroup.querySelectorAll('input'),
+         ...portGroup.querySelectorAll('input'),
+         ...userGroup.querySelectorAll('input'),
+         ...passGroup.querySelectorAll('input')].forEach(el => {
+            if (el.tagName === 'INPUT') {
+                el.addEventListener('change', async () => {
+                    await this.updateWeChatCredential(index);
+                });
+            }
+        });
+
+        row4.appendChild(protoGroup);
+        row4.appendChild(addrGroup);
+        row4.appendChild(portGroup);
+        row4.appendChild(userGroup);
+        row4.appendChild(passGroup);
+
+        // 组装表单
+        form.appendChild(row1);
+        form.appendChild(row2);
+        form.appendChild(row3);
+        form.appendChild(row4);
+
+        // 组装卡片
+        card.appendChild(header);
+        card.appendChild(form);
+
+        return card;
     }  
 
     // 更新平台启用状态  

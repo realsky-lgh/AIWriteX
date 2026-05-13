@@ -43,23 +43,49 @@ class WeixinPublisher:
     BASE_URL = "https://api.weixin.qq.com/cgi-bin"
 
     # ... (__init__, is_verified, _ensure_access_token 等方法保持不变) ...
-    def __init__(self, app_id: str, app_secret: str, author: str):
+    def __init__(self, app_id: str, app_secret: str, author: str, proxy: dict = None):
         # 获取配置数据，只能使用确定的配置，微信配置是循环发布的，需要传递
         config = Config.get_instance()
 
         self.access_token_data = None
+        self._last_token_error = None
         self.app_id = app_id
         self.app_secret = app_secret
         self.author = author
         self.img_api_type = config.img_api_type  # 只有一种模型，统一从配置读取
         self.img_api_key = config.img_api_key
         self.img_api_model = config.img_api_model
+        self._proxies = self._build_proxies(proxy) if proxy else None
+
+    def _build_proxies(self, proxy):
+        """构建 requests 库使用的代理字典"""
+        proto = proxy.get("proto", "")
+        addr = proxy.get("addr", "")
+        port = proxy.get("port", "")
+        user = proxy.get("user", "")
+        passwd = proxy.get("pass", "")
+
+        if not addr or not port:
+            return None
+
+        auth = f"{user}:{passwd}@" if user and passwd else ""
+        proxy_url = f"{proto}://{auth}{addr}:{port}"
+
+        return {"http": proxy_url, "https": proxy_url}
+
+    def _request(self, method, url, **kwargs):
+        """发送 HTTP 请求，自动附加代理和超时"""
+        if self._proxies:
+            kwargs["proxies"] = self._proxies
+        if "timeout" not in kwargs:
+            kwargs["timeout"] = 30
+        return requests.request(method, url, **kwargs)
 
     @property
     def is_verified(self):
         if not hasattr(self, "_is_verified"):
             url = f"{self.BASE_URL}/account/getaccountbasicinfo?access_token={self._ensure_access_token()}"  # noqa 501
-            response = requests.get(url, timeout=5)
+            response = self._request("GET", url, timeout=5)
 
             try:
                 response.raise_for_status()
@@ -70,6 +96,24 @@ class WeixinPublisher:
                 self._is_verified = False
 
         return self._is_verified
+
+    def _get_public_ip(self):
+        """获取本机公网IP"""
+        ip_services = [
+            ("https://api.ipify.org", lambda r: r.text.strip()),
+            ("https://httpbin.org/ip", lambda r: r.json().get("origin", "")),
+            ("https://ifconfig.me/ip", lambda r: r.text.strip()),
+        ]
+        for url, extract in ip_services:
+            try:
+                r = requests.get(url, timeout=5)
+                r.raise_for_status()
+                ip = extract(r)
+                if ip:
+                    return ip
+            except Exception:
+                continue
+        return None
 
     def _ensure_access_token(self):
         # 检查现有token是否有效
@@ -83,15 +127,34 @@ class WeixinPublisher:
         # 获取新token
         url = f"{self.BASE_URL}/token?grant_type=client_credential&appid={self.app_id}&secret={self.app_secret}"  # noqa 501
 
+        self._last_token_error = None
+
         try:
-            response = requests.get(url)
+            response = self._request("GET", url)
             response.raise_for_status()
             data = response.json()
             access_token = data.get("access_token")
             expires_in = data.get("expires_in")
 
             if not access_token:
-                log.print_log(f"获取access_token失败: {data}")
+                errcode = data.get("errcode", 0)
+                errmsg = data.get("errmsg", str(data))
+                if errcode == 40164 or "not in whitelist" in errmsg:
+                    public_ip = self._get_public_ip()
+                    if public_ip:
+                        self._last_token_error = (
+                            f"IP不在公众号白名单中！本机公网IP: {public_ip}，"
+                            f"请到公众号后台「开发设置」→「IP白名单」中添加此IP"
+                        )
+                    else:
+                        self._last_token_error = (
+                            "IP不在公众号白名单中，请到公众号后台「开发设置」→「IP白名单」"
+                            "中添加本机公网IP（未能自动获取IP，请手动查询）"
+                        )
+                    log.print_log(f"{self._last_token_error}。微信返回: {data}")
+                else:
+                    self._last_token_error = f"获取access_token失败: {data}"
+                    log.print_log(self._last_token_error)
                 return None
 
             self.access_token_data = {
@@ -101,12 +164,17 @@ class WeixinPublisher:
             }
             return access_token
         except requests.exceptions.RequestException as e:
-            log.print_log(f"获取微信access_token失败: {e}")
+            self._last_token_error = f"获取微信access_token失败: {e}"
+            log.print_log(self._last_token_error)
 
-        return None  # 获取不到就返回None，失败交给后面的流程处理
+        return None
 
     def _upload_draft(self, article, title, digest, media_id):
         token = self._ensure_access_token()
+        if not token:
+            return None, (
+                self._last_token_error or "获取微信access_token失败，请检查IP白名单和appid/appsecret"
+            )
         url = f"{self.BASE_URL}/draft/add?access_token={token}"
 
         articles = [
@@ -126,7 +194,7 @@ class WeixinPublisher:
 
             headers = {"Content-Type": "application/json"}
             json_data = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            response = requests.post(url, data=json_data, headers=headers)
+            response = self._request("POST", url, data=json_data, headers=headers, timeout=60)
             response.raise_for_status()
             data = response.json()
 
@@ -197,7 +265,7 @@ class WeixinPublisher:
 
             if resolved_path.startswith(("http://", "https://")):
                 # 处理网络图片
-                image_response = requests.get(resolved_path, stream=True)
+                image_response = self._request("GET", resolved_path, stream=True)
                 image_response.raise_for_status()
                 image_buffer = BytesIO(image_response.content)
 
@@ -221,13 +289,17 @@ class WeixinPublisher:
                 file_name = os.path.basename(resolved_path)
 
             token = self._ensure_access_token()
+            if not token:
+                return None, None, (
+                    self._last_token_error or "获取微信access_token失败，请检查IP白名单和appid/appsecret"
+                )
             if self.is_verified:
                 url = f"{self.BASE_URL}/media/upload?access_token={token}&type=image"
             else:
                 url = f"{self.BASE_URL}/material/add_material?access_token={token}&type=image"
 
             files = {"media": (file_name, image_buffer, mime_type)}
-            response = requests.post(url, files=files)
+            response = self._request("POST", url, files=files, timeout=60)
             response.raise_for_status()
             data = response.json()
 
@@ -274,12 +346,17 @@ class WeixinPublisher:
         :return: 包含发布任务ID的字典
         """
         ret = None, None
+        token = self._ensure_access_token()
+        if not token:
+            return None, (
+                self._last_token_error or "获取微信access_token失败，请检查IP白名单和appid/appsecret"
+            )
         url = f"{self.BASE_URL}/freepublish/submit"
-        params = {"access_token": self._ensure_access_token()}
+        params = {"access_token": token}
         data = {"media_id": media_id}
 
         try:
-            response = requests.post(url, params=params, json=data)
+            response = self._request("POST", url, params=params, json=data)
             response.raise_for_status()
             result = response.json()
 
@@ -309,7 +386,7 @@ class WeixinPublisher:
         params = {"publish_id": publish_id}
 
         for _ in range(max_retries):
-            response = requests.post(url, json=params).json()
+            response = self._request("POST", url, json=params).json()
             if response.get("article_id"):
                 return response.get("article_detail")["item"][0]["article_url"]
 
@@ -332,7 +409,7 @@ class WeixinPublisher:
         }
         menu_url = f"{self.BASE_URL}/menu/create?access_token={self._ensure_access_token()}"
         try:
-            result = requests.post(menu_url, json=menu_data).json()
+            result = self._request("POST", menu_url, json=menu_data).json()
             if "errcode" in result and result.get("errcode") != 0:
                 ret = f"创建菜单失败: {result.get('errmsg')}"
         except Exception as e:
@@ -343,6 +420,10 @@ class WeixinPublisher:
     # 上传图文消息素材【订阅号与服务号认证后均可用】
     def media_uploadnews(self, article, title, digest, media_id):
         token = self._ensure_access_token()
+        if not token:
+            return None, (
+                self._last_token_error or "获取微信access_token失败，请检查IP白名单和appid/appsecret"
+            )
         url = f"{self.BASE_URL}/media/uploadnews?access_token={token}"
 
         articles = [
@@ -363,7 +444,7 @@ class WeixinPublisher:
             data = {"articles": articles}
             headers = {"Content-Type": "application/json"}
             json_data = json.dumps(data, ensure_ascii=False).encode("utf-8")
-            response = requests.post(url, data=json_data, headers=headers)
+            response = self._request("POST", url, data=json_data, headers=headers, timeout=60)
             response.raise_for_status()
             result = response.json()
 
@@ -403,7 +484,7 @@ class WeixinPublisher:
         url = f"{self.BASE_URL}/message/mass/sendall?access_token={self._ensure_access_token()}"
 
         try:
-            result = requests.post(url, json=data).json()
+            result = self._request("POST", url, json=data).json()
             if "errcode" in result and result.get("errcode") != 0:
                 ret = f"根据标签进行群发失败: {result.get('errmsg')}"
         except Exception as e:
@@ -559,8 +640,129 @@ class WeixinPublisher:
             return content
 
 
-def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None, draft_only=False):
-    publisher = WeixinPublisher(appid, appsecret, author)
+def _search_cover_by_keyword(title, digest):
+    """通过Unsplash搜索封面图片，返回本地路径或None"""
+    try:
+        from src.ai_write_x.config.config import Config
+        from src.ai_write_x.tools.image_search import ImageSearchTool
+        from src.ai_write_x.utils.path_manager import PathManager
+
+        config = Config.get_instance()
+        if not config.image_search_enabled:
+            return None
+
+        access_key = config.image_search_access_key
+        if not access_key:
+            return None
+
+        # 从标题中提取搜索关键词
+        keyword = title.split("|")[-1].strip() if "|" in title else title
+        # 截取前30字作为关键词，避免太长
+        keyword = keyword[:30] if len(keyword) > 30 else keyword
+
+        searcher = ImageSearchTool(access_key)
+        results = searcher.search(keyword, 1)
+        if not results:
+            return None
+
+        image_dir = str(PathManager.get_image_dir())
+        path = searcher.download_image(results[0]["url"], image_dir)
+        if path:
+            log.print_log(f"Unsplash封面搜索成功: {keyword}")
+            return path
+    except Exception as e:
+        log.print_log(f"Unsplash封面搜索失败: {e}")
+
+    return None
+
+
+def _get_system_bg_path():
+    """获取系统默认封面 bg.png 的绝对路径，保证始终可用"""
+    assets_dir = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "assets")
+    )
+    return os.path.join(assets_dir, "UI", "bg.png")
+
+
+def _validate_cover_file(path):
+    """验证封面文件存在且可读，返回有效路径或 None"""
+    if not path:
+        return None
+    resolved = path
+    if not os.path.isabs(resolved):
+        resolved = os.path.join(os.getcwd(), resolved)
+    if os.path.isfile(resolved) and os.path.getsize(resolved) > 0:
+        return resolved
+    return None
+
+
+def _resolve_cover(title, digest, cover_path, default_cover_path, publisher):
+    """
+    封面图解析链，逐级回退，每级验证文件有效性。
+    返回 (final_path, used_fallback: bool)
+    """
+    assets_dir = os.path.normpath(
+        os.path.join(os.path.dirname(__file__), "..", "assets")
+    )
+
+    # 优先: 文章指定封面
+    if cover_path:
+        resolved = utils.resolve_image_path(cover_path)
+        cropped = utils.crop_cover_image(resolved, (900, 384))
+        path = _validate_cover_file(cropped if cropped else resolved)
+        if path:
+            return path, False
+
+    # 回退1: Unsplash图片搜索
+    path = _validate_cover_file(_search_cover_by_keyword(title, digest))
+    if path:
+        log.print_log("封面: Unsplash搜索")
+        return path, True
+
+    # 回退2: AI生成
+    image_url = publisher.generate_img(
+        "主题:" + title.split("|")[-1] + ",内容:" + digest,
+        "900*384",
+    )
+    if image_url:
+        path = _validate_cover_file(utils.resolve_image_path(image_url))
+        if path:
+            log.print_log("封面: AI生成")
+            return path, True
+
+    # 回退3: 用户自定义默认封面
+    if default_cover_path:
+        resolved = utils.get_res_path(default_cover_path, assets_dir)
+        path = _validate_cover_file(resolved)
+        if path:
+            log.print_log("封面: 用户默认")
+            return path, True
+
+    # 回退4: 系统默认封面（保证存在）
+    path = _validate_cover_file(_get_system_bg_path())
+    if path:
+        log.print_log("封面: 系统默认")
+        return path, True
+
+    raise RuntimeError("系统默认封面 bg.png 缺失，请检查 assets/UI/bg.png")
+
+
+def _upload_cover_with_retry(publisher, image_path):
+    """上传封面，超时或其他网络错误时用系统默认重试一次"""
+    media_id, url, err_msg = publisher.upload_image(image_path)
+
+    # 网络超时或连接错误 → 用系统默认重试
+    if media_id is None and err_msg and ("timed out" in err_msg.lower() or "connection" in err_msg.lower()):
+        fallback = _get_system_bg_path()
+        if os.path.isfile(fallback) and fallback != image_path:
+            log.print_log("封面上传超时，使用系统默认重试")
+            return publisher.upload_image(fallback)
+
+    return media_id, url, err_msg
+
+
+def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None, draft_only=False, default_cover_path=None, proxy=None):
+    publisher = WeixinPublisher(appid, appsecret, author, proxy=proxy)
     config = Config.get_instance()
     draft_only = draft_only or getattr(config, 'draft_only', False) or config.get_draft_only_by_appid(appid)
 
@@ -572,46 +774,18 @@ def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None, dr
     # 在 div 变成 section 之后再注入样式，虽然主要针对 p 标签，但层级结构可能变了，所以放在结构调整后
     article = publisher._inject_indent(article)
 
-    # 3. 再处理正文图片URL替换 (bs4 处理后的 html 结构标准，利于正则提取)
-    cropped_image_path = ""
-    final_image_path = None  # 最终要上传的图片路径
+    # 3. 封面图解析与验证
+    final_image_path, used_fallback = _resolve_cover(
+        title, digest, cover_path, default_cover_path, publisher
+    )
 
-    if cover_path:
-        resolved_cover_path = utils.resolve_image_path(cover_path)
-        cropped_image_path = utils.crop_cover_image(resolved_cover_path, (900, 384))
-
-        if cropped_image_path:
-            final_image_path = cropped_image_path
-        else:
-            final_image_path = resolved_cover_path
-    else:
-        # 自动生成封面
-        image_url = publisher.generate_img(
-            "主题:" + title.split("|")[-1] + ",内容:" + digest,
-            "900*384",
-        )
-
-        if image_url is None:
-            log.print_log("生成图片出错,使用默认图片")
-            default_image = utils.get_res_path(
-                os.path.join("UI", "bg.png"), os.path.dirname(__file__) + "/../assets/"
-            )
-            final_image_path = utils.resolve_image_path(default_image)
-        else:
-            final_image_path = utils.resolve_image_path(image_url)
-
-    # 封面图片上传
-    media_id, _, err_msg = publisher.upload_image(final_image_path)
-
-    # 如果使用了临时裁剪文件，上传后删除
-    if cover_path and cropped_image_path and cropped_image_path != cover_path:
-        try:
-            os.remove(cropped_image_path)
-        except Exception:
-            pass
+    # 4. 封面图片上传（带重试：超时则用系统默认重试一次）
+    media_id, _, err_msg = _upload_cover_with_retry(publisher, final_image_path)
 
     if media_id is None:
         return f"封面{err_msg}，无法发布文章", article, False
+
+    # 5. 再处理正文图片URL替换
 
     # 这里需要将文章中的图片url替换为上传到微信返回的图片url
     try:

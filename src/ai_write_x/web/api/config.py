@@ -2,8 +2,10 @@
 # -*- coding: UTF-8 -*-
 
 import json
+import time
+from pathlib import Path
 from typing import Dict, Any
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, HTTPException, File, UploadFile
 from pydantic import BaseModel
 import requests
 from packaging import version
@@ -231,9 +233,8 @@ async def get_help_manual():
     from ..app import templates
 
     # 渲染模板
-    html_content = templates.TemplateResponse(
-        "components/help-manual.html", {"request": {}}
-    ).body.decode("utf-8")
+    template = templates.get_template("components/help-manual.html")
+    html_content = template.render({"request": {}})
 
     return HTMLResponse(content=html_content)
 
@@ -295,3 +296,38 @@ async def open_external_url(request: URLRequest):
         return {"status": "success", "message": result}
     except Exception as e:
         return {"status": "error", "message": str(e)}
+
+
+@router.post("/upload-cover")
+async def upload_cover(file: UploadFile = File(...)):
+    """上传自定义封面图片"""
+    import shutil
+
+    try:
+        # 验证文件类型
+        allowed_types = {"image/jpeg", "image/png", "image/webp", "image/gif"}
+        if file.content_type and file.content_type not in allowed_types:
+            raise HTTPException(status_code=400, detail="仅支持 JPG、PNG、WebP、GIF 格式")
+
+        # 保存到 assets/UI 目录
+        import os
+        web_dir = Path(__file__).parent.parent  # web/
+        src_dir = web_dir.parent  # src/ai_write_x/
+        assets_dir = src_dir / "assets" / "UI"
+        assets_dir.mkdir(parents=True, exist_ok=True)
+
+        # 生成唯一文件名
+        ext = Path(file.filename).suffix if file.filename else ".png"
+        safe_name = f"cover_custom_{int(time.time())}{ext}"
+        save_path = assets_dir / safe_name
+
+        with save_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+
+        relative_path = f"UI/{safe_name}"
+        return {"status": "success", "path": relative_path, "full_path": str(save_path)}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))

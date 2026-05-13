@@ -169,6 +169,17 @@ async def publish_articles(request: PublishRequest):
                     if ext != ".html" and format_publish:
                         article_to_publish = utils.get_format_article(ext, content)
 
+                    cover_path = utils.get_cover_path(article_path)
+                    # 构建代理配置
+                    proxy = None
+                    if cred.get("proxy_proto") and cred.get("proxy_addr") and cred.get("proxy_port"):
+                        proxy = {
+                            "proto": cred["proxy_proto"],
+                            "addr": cred["proxy_addr"],
+                            "port": cred["proxy_port"],
+                            "user": cred.get("proxy_user", ""),
+                            "pass": cred.get("proxy_pass", ""),
+                        }
                     message, _, success = pub2wx(
                         title=title,
                         digest=digest,
@@ -176,8 +187,10 @@ async def publish_articles(request: PublishRequest):
                         appid=cred["appid"],
                         appsecret=cred["appsecret"],
                         author=cred.get("author", ""),
-                        cover_path=utils.get_cover_path(article_path),
+                        cover_path=cover_path,
                         draft_only=cred.get("draft_only", False),
+                        default_cover_path=cred.get("cover") if not cover_path else None,
+                        proxy=proxy,
                     )
 
                     if success:
@@ -199,6 +212,7 @@ async def publish_articles(request: PublishRequest):
                         )
                     else:
                         fail_count += 1
+                        error_details.append(f"{cred.get('author', '未命名')}: {message}")
                         save_publish_record(
                             article_path=article_path,
                             platform="wechat",

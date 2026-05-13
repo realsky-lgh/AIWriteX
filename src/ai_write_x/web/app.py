@@ -8,7 +8,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, FileResponse
 from fastapi.templating import Jinja2Templates
 from fastapi.middleware.gzip import GZipMiddleware
 
@@ -85,6 +85,9 @@ templates_path = web_path / "templates"
 # 挂载静态文件
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 app.mount("/images", StaticFiles(directory=PathManager.get_image_dir()), name="images")
+# 挂载资源目录，用于用户上传的自定义封面等
+assets_dir = web_path.parent / "assets" if not utils.get_is_release_ver() else Path(utils.get_res_path("assets"))
+app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -102,8 +105,16 @@ app.include_router(generate_router)
 async def read_root(request: Request):
     """返回主界面"""
     return templates.TemplateResponse(
-        "index.html", {"request": request, "version": get_version_with_prefix()}  # 传递版本号
+        request, "index.html", {"request": request, "version": get_version_with_prefix()}
     )
+
+
+@app.get("/favicon.ico")
+async def favicon():
+    """返回 favicon"""
+    icon_path = web_path.parent / "assets" / "UI" / "icon.png"
+    if icon_path.exists():
+        return FileResponse(str(icon_path), media_type="image/png")
 
 
 @app.get("/health")

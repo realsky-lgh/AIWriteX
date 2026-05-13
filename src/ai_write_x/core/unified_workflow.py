@@ -172,6 +172,8 @@ class UnifiedContentWorkflow:
             if save_result.get("success", False):
                 article_path = save_result.get("path")
                 kwargs["article_path"] = article_path
+                # 为文章保存封面图，确保发布时有封面可用
+                self._persist_article_cover(article_path, image_urls)
                 log.print_log(f"文章《{title}》保存成功！")
             log.print_log("[PROGRESS:SAVE:END]", "internal")
 
@@ -642,6 +644,48 @@ class UnifiedContentWorkflow:
             return False
 
         return True
+
+    def _persist_article_cover(self, article_path: str, image_urls: list) -> None:
+        """为文章保存封面图到 .design.json，确保发布时有封面可用"""
+        import json
+        from pathlib import Path
+
+        design_path = Path(article_path).with_suffix(".design.json")
+        design_data = {}
+        if design_path.exists():
+            try:
+                design_data = json.loads(design_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+
+        # 已有封面则跳过
+        if design_data.get("cover"):
+            return
+
+        # 优先使用搜索配图的第一张
+        if image_urls and len(image_urls) > 0:
+            design_data["cover"] = image_urls[0]
+            design_path.write_text(json.dumps(design_data, ensure_ascii=False, indent=2), encoding="utf-8")
+            log.print_log("已自动设置文章封面（来自搜索配图）")
+            return
+
+        # 回退：使用凭证的自定义默认封面
+        config = Config.get_instance()
+        credentials = config.wechat_credentials
+        for cred in credentials:
+            cover_path = cred.get("cover")
+            if cover_path:
+                # 转换为绝对路径：凭证中存储的是相对 assets 目录的路径
+                import os
+                assets_dir = os.path.normpath(
+                    os.path.join(os.path.dirname(__file__), "..", "assets")
+                )
+                abs_cover = os.path.join(assets_dir, cover_path)
+                if os.path.exists(abs_cover):
+                    design_data["cover"] = abs_cover
+                    design_path.write_text(json.dumps(design_data, ensure_ascii=False, indent=2), encoding="utf-8")
+                    log.print_log("已自动设置文章封面（来自公众号默认封面）")
+                    return
 
     def get_performance_report(self) -> Dict[str, Any]:
         """获取性能报告"""

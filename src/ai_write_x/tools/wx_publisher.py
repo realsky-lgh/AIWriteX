@@ -559,9 +559,10 @@ class WeixinPublisher:
             return content
 
 
-def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None):
+def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None, draft_only=False):
     publisher = WeixinPublisher(appid, appsecret, author)
     config = Config.get_instance()
+    draft_only = draft_only or getattr(config, 'draft_only', False) or config.get_draft_only_by_appid(appid)
 
     # 1. 结构标准化：强制 Div -> Section
     # 这是处理的第一步，确保所有容器都是微信友好的 <section>
@@ -654,24 +655,32 @@ def pub2wx(title, digest, article, appid, appsecret, author, cover_path=None):
     if not publisher.is_verified:
         add_draft_result, err_msg = publisher.add_draft(article, title, digest, media_id)
         if add_draft_result is None:
-            # 添加草稿失败，不再继续执行
             return f"{err_msg}，无法发布文章", article, False
+
+        if draft_only:
+            return "已存入草稿箱（未发布）", article, True
 
         publish_result, err_msg = publisher.publish(add_draft_result.publishId)
         if publish_result is None:
-            if "api unauthorized" in err_msg:  # type: ignore
+            if "api unauthorized" in err_msg:
                 return (
                     "自动发布失败，【自2025年7月15日起，个人主体账号、未认证企业账号及不支持认证的账号的发布权限被回收，需到公众号管理后台->草稿箱->发表】",
                     article,
-                    True,  # 此类目前认为是发布成功
+                    True,
                 )
             else:
                 return f"{err_msg}，无法继续发布文章", article, False
     else:
+        if draft_only:
+            add_draft_result, err_msg = publisher.add_draft(article, title, digest, media_id)
+            if add_draft_result is None:
+                return f"{err_msg}，无法存入草稿箱", article, False
+            return "已存入草稿箱（未发布）", article, True
+
         # 显示到列表
         media_id, ret = publisher.media_uploadnews(article, title, digest, media_id)
         if media_id is None:
-            if "api unauthorized" in ret:  # type: ignore
+            if "api unauthorized" in ret:
                 return (
                     "账号虽认证（非企业账号），但无发布权限，发布失败，无法自动发布文章",
                     article,

@@ -177,6 +177,7 @@ async def publish_articles(request: PublishRequest):
                         appsecret=cred["appsecret"],
                         author=cred.get("author", ""),
                         cover_path=utils.get_cover_path(article_path),
+                        draft_only=cred.get("draft_only", False),
                     )
 
                     if success:

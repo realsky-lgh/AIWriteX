@@ -12,6 +12,7 @@ from src.ai_write_x.utils import utils
 from src.ai_write_x.utils import log
 from src.ai_write_x.config.config import Config
 from src.ai_write_x.core.system_init import setup_aiwritex
+from src.ai_write_x.core.unified_workflow import BatchWorkflow
 
 
 warnings.filterwarnings("ignore", category=SyntaxWarning, module="pysbd")
@@ -119,17 +120,21 @@ def run(inputs):
     try:
         workflow = setup_aiwritex()
 
-        # 提取参数
-        topic = inputs.get("topic", "")
-
-        # 准备kwargs参数
         kwargs = {
             "platform": inputs.get("platform", ""),
             "urls": inputs.get("urls", []),
             "reference_ratio": inputs.get("reference_ratio", 0.0),
         }
 
-        return workflow.execute(topic=topic, **kwargs)
+        topics = inputs.get("topics", [])
+        if topics and len(topics) > 1:
+            batch = BatchWorkflow()
+            return batch.execute_batch(topics=topics, **kwargs)
+        else:
+            topic = inputs.get("topic", "")
+            if not topic and topics:
+                topic = topics[0]
+            return workflow.execute(topic=topic, **kwargs)
 
     except Exception as e:
         log.print_traceback("", e)
@@ -168,6 +173,9 @@ def ai_write_x_run(config_data=None):
         "urls": urls,
         "reference_ratio": reference_ratio,
     }
+
+    if config_data and config_data.get("topics"):
+        inputs["topics"] = config_data["topics"]
 
     if config_data:
         try:

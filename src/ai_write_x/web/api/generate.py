@@ -4,7 +4,7 @@
 from fastapi import APIRouter, HTTPException, WebSocket, WebSocketDisconnect
 from fastapi.responses import FileResponse
 from pydantic import BaseModel
-from typing import Optional
+from typing import Optional, List
 import asyncio
 import time
 import queue
@@ -37,8 +37,10 @@ class GenerateRequest(BaseModel):
     """内容生成请求"""
 
     topic: str
+    topics: Optional[List[str]] = None
     platform: Optional[str] = ""
     reference: Optional[ReferenceConfig] = None
+    draft_only: bool = False
 
 
 @router.get("/config/validate")
@@ -103,7 +105,11 @@ async def generate_content(request: GenerateRequest):
             "custom_template_category": "",
             "custom_template": "",
             "platform": request.platform or "",
+            "draft_only": request.draft_only,
         }
+
+        if request.topics:
+            config_data["topics"] = [t.strip() for t in request.topics if t.strip()]
 
         # 如果启用借鉴模式,覆盖默认值
         if request.reference:

@@ -1,6 +1,6 @@
 import os
 import time
-from typing import Dict, Any
+from typing import Dict, Any, List
 
 from src.ai_write_x.core.base_framework import (
     WorkflowConfig,
@@ -565,3 +565,29 @@ class UnifiedContentWorkflow:
     def register_platform_adapter(self, name: str, adapter):
         """注册新的平台适配器"""
         self.platform_adapters[name] = adapter
+
+
+class BatchWorkflow:
+    """批量内容生成编排器 - 串行模式"""
+
+    def __init__(self):
+        self.single_workflow = UnifiedContentWorkflow()
+
+    def execute_batch(self, topics: List[str], **kwargs) -> Dict[str, Any]:
+        results = []
+        total = len(topics)
+        for i, topic in enumerate(topics):
+            topic = topic.strip()
+            if not topic:
+                continue
+            log.print_log(f"[PROGRESS:BATCH:{i+1}/{total}] 开始生成: {topic}", "internal")
+            try:
+                result = self.single_workflow.execute(topic=topic, **kwargs)
+                result["topic"] = topic
+                result["index"] = i
+                results.append(result)
+            except Exception as e:
+                log.print_log(f"[PROGRESS:BATCH:{i+1}/{total}] 生成失败: {topic} - {e}", "error")
+                results.append({"topic": topic, "index": i, "success": False, "error": str(e)})
+        success_count = sum(1 for r in results if r.get("success"))
+        return {"batch_results": results, "total": total, "success_count": success_count}

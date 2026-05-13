@@ -38,6 +38,8 @@ wechat:
     - appid: ""
       appsecret: ""
       author: ""
+      name: ""
+      draft_only: false
       call_sendall: false
       sendall: true
       tag_id: 0

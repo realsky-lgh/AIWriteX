@@ -81,6 +81,8 @@ class Config:
                         "appid": "",
                         "appsecret": "",
                         "author": "",
+                        "name": "",
+                        "draft_only": False,
                         "call_sendall": False,
                         "sendall": True,
                         "tag_id": 0,
@@ -1775,6 +1777,12 @@ class Config:
         for cred in self.config["wechat"]["credentials"]:
             if cred["appid"] == target_appid:
                 return cred["tag_id"]
+        return False
+
+    def get_draft_only_by_appid(self, target_appid):
+        for cred in self.config["wechat"]["credentials"]:
+            if cred["appid"] == target_appid:
+                return cred.get("draft_only", False)
         return False
 
     def load_config(self):

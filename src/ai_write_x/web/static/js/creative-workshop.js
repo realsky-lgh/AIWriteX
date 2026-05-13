@@ -10,18 +10,19 @@ const ErrorType = {
     
 class CreativeWorkshopManager {        
     
-    constructor() {        
-        this.isGenerating = false;        
-        this.currentTopic = '';        
-        this.generationHistory = [];        
-        this.templateCategories = [];      
-        this.templates = [];      
-        this.logWebSocket = null;    
-        this.statusPollInterval = null;    
-        this.bottomProgress = new BottomProgressManager();    
-        this._hotSearchPlatform = '';    
-          
-        this.messageQueue = [];  // 消息队列  
+    constructor() {
+        this.isGenerating = false;
+        this.currentTopic = '';
+        this.isBatchMode = false;
+        this.generationHistory = [];
+        this.templateCategories = [];
+        this.templates = [];
+        this.logWebSocket = null;
+        this.statusPollInterval = null;
+        this.bottomProgress = new BottomProgressManager();
+        this._hotSearchPlatform = '';
+
+        this.messageQueue = [];  // 消息队列
         this.isProcessingQueue = false;  // 是否正在处理队列  
 
         this.init();        
@@ -133,15 +134,22 @@ class CreativeWorkshopManager {
             });  
         }  
         
-        const generateBtn = document.getElementById('generate-btn');  
-        if (generateBtn) {  
-            generateBtn.addEventListener('click', () => {  
-                if (this.isGenerating) {  
-                    this.stopGeneration();  
-                } else {  
-                    this.startGeneration();  
-                }  
-            });  
+        const batchModeBtn = document.getElementById('batch-mode-btn');
+        if (batchModeBtn) {
+            batchModeBtn.addEventListener('click', () => {
+                this.toggleBatchMode();
+            });
+        }
+
+        const generateBtn = document.getElementById('generate-btn');
+        if (generateBtn) {
+            generateBtn.addEventListener('click', () => {
+                if (this.isGenerating) {
+                    this.stopGeneration();
+                } else {
+                    this.startGeneration();
+                }
+            });
         }  
         
         //  借鉴模式按钮事件  
@@ -207,8 +215,30 @@ class CreativeWorkshopManager {
     }   
       
     // ========== 借鉴模式管理 ==========      
-      
-    toggleReferenceMode() {  
+
+    toggleBatchMode() {
+        if (this.isGenerating) {
+            window.app?.showNotification('生成过程中无法切换批量模式', 'warning');
+            return;
+        }
+
+        this.isBatchMode = !this.isBatchMode;
+        const batchModeBtn = document.getElementById('batch-mode-btn');
+        const singleInput = document.getElementById('topic-input');
+        const batchInput = document.getElementById('batch-topic-input');
+
+        if (this.isBatchMode) {
+            batchModeBtn.classList.add('active');
+            singleInput.style.display = 'none';
+            batchInput.style.display = '';
+        } else {
+            batchModeBtn.classList.remove('active');
+            singleInput.style.display = '';
+            batchInput.style.display = 'none';
+        }
+    }
+
+    toggleReferenceMode() {
         const panel = document.getElementById('reference-mode-panel');  
         const referenceModeBtn = document.getElementById('reference-mode-btn');  
         const logPanel = document.getElementById('generation-progress');  // 新增  
@@ -329,9 +359,24 @@ class CreativeWorkshopManager {
             return;  
         }  
         
-        // ========== 阶段 3: 获取话题 ==========  
-        let topic = this.currentTopic.trim();  
-        const referenceConfig = this.getReferenceConfig();  
+        // ========== 阶段 3: 获取话题 ==========
+        let topic = this.currentTopic.trim();
+        let topics = [];
+        const referenceConfig = this.getReferenceConfig();
+
+        // 批量模式：从批量输入框解析话题列表
+        if (this.isBatchMode) {
+            const batchInput = document.getElementById('batch-topic-input');
+            const batchText = batchInput?.value || '';
+            topics = batchText.split('\n')
+                .map(t => t.trim())
+                .filter(t => t.length > 0);
+            if (topics.length === 0) {
+                window.app?.showNotification('批量模式下请输入至少一个话题', 'warning');
+                return;
+            }
+            topic = topics[0];
+        }  
         
         // 借鉴模式参数校验  
         if (referenceConfig) {  
@@ -391,14 +436,18 @@ class CreativeWorkshopManager {
         
         // 在这里才设置生成状态  
         this.isGenerating = true;  
-        this.updateGenerationUI(true);  
-        
-        // 添加到历史记录  
-        this.addToHistory(topic);  
-        
-        // 记录日志  
-        const taskMode = referenceConfig ? '借鉴模式' : '热搜模式';  
-        this.appendLog(`🚀 开始生成任务 (${taskMode})`, 'status', false, Date.now() / 1000);  
+        this.updateGenerationUI(true);
+
+        // 添加到历史记录
+        if (this.isBatchMode && topics.length > 1) {
+            topics.forEach(t => this.addToHistory(t));
+        } else {
+            this.addToHistory(topic);
+        }
+
+        // 记录日志
+        const taskMode = this.isBatchMode ? `批量模式(${topics.length}篇)` : (referenceConfig ? '借鉴模式' : '热搜模式');
+        this.appendLog(`🚀 开始生成任务 (${taskMode})`, 'status', false, Date.now() / 1000);
         
         // 启动进度条  
         if (this.bottomProgress) {  
@@ -415,18 +464,22 @@ class CreativeWorkshopManager {
         // 清空消息队列,准备新任务  
         this.clearMessageQueue();  
         
-        // ========== 阶段 5: 发起生成请求 ==========  
-        try {  
-            const response = await fetch('/api/generate', {  
-                method: 'POST',  
-                headers: {  
-                    'Content-Type': 'application/json',  
-                },  
-                body: JSON.stringify({  
-                    topic: topic,  
-                    platform: this._hotSearchPlatform || '',  
-                    reference: referenceConfig  
-                })  
+        // ========== 阶段 5: 发起生成请求 ==========
+        try {
+            const requestBody = {
+                topic: topic,
+                platform: this._hotSearchPlatform || '',
+                reference: referenceConfig
+            };
+            if (this.isBatchMode && topics.length > 1) {
+                requestBody.topics = topics;
+            }
+            const response = await fetch('/api/generate', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify(requestBody)
             });  
             
             if (!response.ok) {  

@@ -34,12 +34,21 @@
           
         <!-- 主输入卡片 -->  
         <div class="workshop-card">  
-            <!-- 大型输入框 -->  
-            <textarea   
-                id="topic-input"   
-                class="topic-input"  
-                placeholder="输入创作话题，留空自动获取热搜话题..."  
-                rows="4"  
+            <!-- 大型输入框 -->
+            <textarea
+                id="topic-input"
+                class="topic-input"
+                placeholder="输入创作话题，留空自动获取热搜话题..."
+                rows="4"
+            ></textarea>
+
+            <!-- 批量话题输入框（默认隐藏） -->
+            <textarea
+                id="batch-topic-input"
+                class="topic-input"
+                placeholder="批量生成模式：每行一个话题，例如：&#10;AI在医疗领域的应用&#10;2024年全球经济趋势&#10;如何提升个人学习效率"
+                rows="6"
+                style="display: none;"
             ></textarea>  
             
             <div id="bottom-progress" class="bottom-progress hidden">  
@@ -50,8 +59,20 @@
 
             <!-- 底部工具栏 -->  
             <div class="input-toolbar">  
-                <!-- 左侧功能按钮 -->  
-                <div class="toolbar-left">                        
+                <!-- 左侧功能按钮 -->
+                <div class="toolbar-left">
+                    <button id="batch-mode-btn" class="toolbar-btn">
+                        <svg class="panel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                            <line x1="8" y1="6" x2="21" y2="6"/>
+                            <line x1="8" y1="12" x2="21" y2="12"/>
+                            <line x1="8" y1="18" x2="21" y2="18"/>
+                            <line x1="3" y1="6" x2="3.01" y2="6"/>
+                            <line x1="3" y1="12" x2="3.01" y2="12"/>
+                            <line x1="3" y1="18" x2="3.01" y2="18"/>
+                        </svg>
+                        <span>批量生成</span>
+                    </button>
+
                     <button id="reference-mode-btn" class="toolbar-btn">    
                         <svg class="panel-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">    
                             <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/>    

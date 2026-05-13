@@ -1355,38 +1355,42 @@ class AIWriteXConfigManager {
         this.updateWeChatCredential(index);  
     } 
     
-    // 更新单个凭证配置  
-    async updateWeChatCredential(index) {  
-        const credentials = [...(this.config.wechat?.credentials || [])];  
-        
-        const credential = {  
-            appid: document.getElementById(`wechat-appid-${index}`)?.value || '',  
-            appsecret: document.getElementById(`wechat-appsecret-${index}`)?.value || '',  
-            author: document.getElementById(`wechat-author-${index}`)?.value || '',  
-            call_sendall: document.getElementById(`wechat-call-sendall-${index}`)?.checked || false,  
-            sendall: document.getElementById(`wechat-sendall-${index}`)?.checked !== false,  
-            tag_id: parseInt(document.getElementById(`wechat-tag-id-${index}`)?.value || 0)  
-        };  
-        
-        credentials[index] = credential;  
-        
-        await this.updateConfig({   
-            wechat: { credentials }   
-        });  
+    // 更新单个凭证配置
+    async updateWeChatCredential(index) {
+        const credentials = [...(this.config.wechat?.credentials || [])];
+
+        const credential = {
+            appid: document.getElementById(`wechat-appid-${index}`)?.value || '',
+            appsecret: document.getElementById(`wechat-appsecret-${index}`)?.value || '',
+            author: document.getElementById(`wechat-author-${index}`)?.value || '',
+            name: document.getElementById(`wechat-name-${index}`)?.value || '',
+            draft_only: document.getElementById(`wechat-draft-only-${index}`)?.checked || false,
+            call_sendall: document.getElementById(`wechat-call-sendall-${index}`)?.checked || false,
+            sendall: document.getElementById(`wechat-sendall-${index}`)?.checked !== false,
+            tag_id: parseInt(document.getElementById(`wechat-tag-id-${index}`)?.value || 0)
+        };
+
+        credentials[index] = credential;
+
+        await this.updateConfig({
+            wechat: { credentials }
+        });
     }  
     
-    // 添加新凭证  
-    addWeChatCredential() {  
-        const credentials = [...(this.config.wechat?.credentials || [])];  
-        
-        // 添加默认凭证  
-        credentials.push({  
-            appid: '',  
-            appsecret: '',  
-            author: '',  
-            call_sendall: false,  
-            sendall: true,  
-            tag_id: 0  
+    // 添加新凭证
+    addWeChatCredential() {
+        const credentials = [...(this.config.wechat?.credentials || [])];
+
+        // 添加默认凭证
+        credentials.push({
+            appid: '',
+            appsecret: '',
+            author: '',
+            name: '',
+            draft_only: false,
+            call_sendall: false,
+            sendall: true,
+            tag_id: 0
         });  
         
         // 更新配置  
@@ -1477,7 +1481,7 @@ class AIWriteXConfigManager {
         
         const title = document.createElement('div');  
         title.className = 'credential-title';  
-        title.textContent = `凭证 ${index + 1}`;  
+        title.textContent = credential.name || `凭证 ${index + 1}`;  
         
         const deleteBtn = document.createElement('button');  
         deleteBtn.className = 'credential-delete-btn';  
@@ -1490,11 +1494,28 @@ class AIWriteXConfigManager {
         header.appendChild(title);  
         header.appendChild(deleteBtn);  
         
-        // 表单内容  
-        const form = document.createElement('div');  
-        form.className = 'credential-form';  
-        
-        // 行1: AppID、AppSecret、作者在同一行  
+        // 表单内容
+        const form = document.createElement('div');
+        form.className = 'credential-form';
+
+        // 行0: 公众号名称（全宽）
+        const row0 = document.createElement('div');
+        row0.className = 'form-row';
+        const nameGroup = this.createFormGroup(
+            '公众号名称',
+            'text',
+            `wechat-name-${index}`,
+            credential.name || '',
+            '用于识别不同公众号，如「技术号」「生活号」'
+        );
+        nameGroup.querySelector('input')?.addEventListener('change', async () => {
+            await this.updateWeChatCredential(index);
+            this.populateWeChatUI();
+        });
+        row0.appendChild(nameGroup);
+        form.appendChild(row0);
+
+        // 行1: AppID、AppSecret、作者在同一行
         const row1 = document.createElement('div');  
         row1.className = 'form-row';  
         
@@ -1527,12 +1548,40 @@ class AIWriteXConfigManager {
         );  
         authorGroup.classList.add('form-group-third');  
         
-        row1.appendChild(appidGroup);  
-        row1.appendChild(appsecretGroup);  
-        row1.appendChild(authorGroup);  
-        
-        // 行2: 群发选项  
-        const row2 = document.createElement('div');  
+        row1.appendChild(appidGroup);
+        row1.appendChild(appsecretGroup);
+        row1.appendChild(authorGroup);
+
+        // 行1.5: 仅存草稿箱
+        const row1_5 = document.createElement('div');
+        row1_5.className = 'form-row';
+        const draftOnlyGroup = document.createElement('div');
+        draftOnlyGroup.className = 'form-group';
+        const draftOnlyLabel = document.createElement('label');
+        draftOnlyLabel.className = 'checkbox-label';
+        const draftOnlyCheckbox = document.createElement('input');
+        draftOnlyCheckbox.type = 'checkbox';
+        draftOnlyCheckbox.id = `wechat-draft-only-${index}`;
+        draftOnlyCheckbox.checked = credential.draft_only || false;
+        draftOnlyCheckbox.addEventListener('change', async () => {
+            await this.updateWeChatCredential(index);
+        });
+        const draftOnlyCustom = document.createElement('span');
+        draftOnlyCustom.className = 'checkbox-custom';
+        const draftOnlyText = document.createTextNode('仅存草稿箱');
+        draftOnlyLabel.appendChild(draftOnlyCheckbox);
+        draftOnlyLabel.appendChild(draftOnlyCustom);
+        draftOnlyLabel.appendChild(draftOnlyText);
+        draftOnlyGroup.appendChild(draftOnlyLabel);
+        const draftOnlyHelp = document.createElement('small');
+        draftOnlyHelp.className = 'form-help';
+        draftOnlyHelp.textContent = '开启后只上传到草稿箱，不自动发布';
+        draftOnlyGroup.appendChild(draftOnlyHelp);
+        row1_5.appendChild(draftOnlyGroup);
+        form.appendChild(row1_5);
+
+        // 行2: 群发选项
+        const row2 = document.createElement('div');
         row2.className = 'form-row';  
         
         const sendallOptionsDiv = document.createElement('div');  

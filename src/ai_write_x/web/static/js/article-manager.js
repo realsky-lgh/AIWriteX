@@ -703,9 +703,14 @@ class ArticleManager {
             this.batchDelete();    
         });    
         
-        // 批量发布    
-        document.getElementById('batch-publish')?.addEventListener('click', () => {    
-            this.batchPublish();    
+        // 批量发布
+        document.getElementById('batch-publish')?.addEventListener('click', () => {
+            this.batchPublish();
+        });
+
+        // 批量导出ZIP
+        document.getElementById('batch-export-zip')?.addEventListener('click', () => {
+            this.batchExportZip();
         });    
         
         // 卡片复选框变化    
@@ -809,33 +814,38 @@ class ArticleManager {
         this.updateBatchCount();  
     }  
 
-    updateBatchCount() {  
-        const count = this.selectedArticles.size;  
-        const batchCount = document.querySelector('.batch-count');  
-        const batchPublish = document.getElementById('batch-publish');  
-        const batchDelete = document.getElementById('batch-delete');  
-        
-        if (batchCount) {  
-            batchCount.textContent = `(已选 ${count})`;  
-        }  
-        
-        // 根据选中数量启用/禁用子按钮  
-        if (batchPublish) batchPublish.disabled = count === 0;  
-        if (batchDelete) batchDelete.disabled = count === 0;  
+    updateBatchCount() {
+        const count = this.selectedArticles.size;
+        const batchCount = document.querySelector('.batch-count');
+        const batchPublish = document.getElementById('batch-publish');
+        const batchDelete = document.getElementById('batch-delete');
+        const batchExport = document.getElementById('batch-export-zip');
+
+        if (batchCount) {
+            batchCount.textContent = `(已选 ${count})`;
+        }
+
+        // 根据选中数量启用/禁用子按钮
+        if (batchPublish) batchPublish.disabled = count === 0;
+        if (batchDelete) batchDelete.disabled = count === 0;
+        if (batchExport) batchExport.disabled = count === 0;
     } 
 
-    // 更新批量操作按钮状态  
-    updateBatchButtons() {  
-        const batchDelete = document.getElementById('batch-delete');  
-        const batchPublish = document.getElementById('batch-publish');  
-        
-        if (this.selectedArticles.size > 0) {  
-            batchDelete.style.display = 'block';  
-            batchPublish.style.display = 'block';  
-        } else {  
-            batchDelete.style.display = 'none';  
-            batchPublish.style.display = 'none';  
-        }  
+    // 更新批量操作按钮状态
+    updateBatchButtons() {
+        const batchDelete = document.getElementById('batch-delete');
+        const batchPublish = document.getElementById('batch-publish');
+        const batchExport = document.getElementById('batch-export-zip');
+
+        if (this.selectedArticles.size > 0) {
+            batchDelete.style.display = 'block';
+            batchPublish.style.display = 'block';
+            batchExport.style.display = 'block';
+        } else {
+            batchDelete.style.display = 'none';
+            batchPublish.style.display = 'none';
+            batchExport.style.display = 'none';
+        }
     }  
     
     // 预览文章  
@@ -1551,48 +1561,81 @@ class ArticleManager {
         );  
     }
     
-    // 批量删除  
-    async batchDelete() {  
-        if (this.selectedArticles.size === 0) {  
-            this.showNotification('请先选择要删除的文章', 'warning');  
-            return;  
-        }  
-        
-        const count = this.selectedArticles.size;  
-        
-        window.dialogManager.showConfirm(  
-            `确认删除选中的 ${count} 篇文章吗?`,  
-            async () => {  
-                const paths = Array.from(this.selectedArticles);  
-                let successCount = 0;  
-                
-                for (const path of paths) {  
-                    try {  
-                        const response = await fetch(`/api/articles/${encodeURIComponent(path)}`, {  
-                            method: 'DELETE'  
-                        });  
-                        if (response.ok) {  
-                            successCount++;  
-                            const card = document.querySelector(`.article-card[data-path="${path}"]`);  
-                            if (card) card.remove();  
-                        }  
-                    } catch (error) {  
-                        console.error('删除失败:', path, error);  
-                    }  
-                }  
-                
-                this.showNotification(`删除完成: ${successCount}/${count}`, 'success');  
-                
-                // 更新数据  
-                await this.loadArticles();  
-                this.renderStatusTree();  
-                
-                // 退出批量模式  
-                this.selectedArticles.clear();  
-                this.batchMode = false;  
-                this.toggleBatchMode(); 
-            }  
-        );  
+    // 批量删除
+    async batchDelete() {
+        if (this.selectedArticles.size === 0) {
+            this.showNotification('请先选择要删除的文章', 'warning');
+            return;
+        }
+
+        const count = this.selectedArticles.size;
+
+        window.dialogManager.showConfirm(
+            `确认删除选中的 ${count} 篇文章吗?`,
+            async () => {
+                const paths = Array.from(this.selectedArticles);
+                let successCount = 0;
+
+                for (const path of paths) {
+                    try {
+                        const response = await fetch(`/api/articles/${encodeURIComponent(path)}`, {
+                            method: 'DELETE'
+                        });
+                        if (response.ok) {
+                            successCount++;
+                            const card = document.querySelector(`.article-card[data-path="${path}"]`);
+                            if (card) card.remove();
+                        }
+                    } catch (error) {
+                        console.error('删除失败:', path, error);
+                    }
+                }
+
+                this.showNotification(`删除完成: ${successCount}/${count}`, 'success');
+
+                // 更新数据
+                await this.loadArticles();
+                this.renderStatusTree();
+
+                // 退出批量模式
+                this.selectedArticles.clear();
+                this.batchMode = false;
+                this.toggleBatchMode();
+            }
+        );
+    }
+
+    // 批量导出ZIP
+    async batchExportZip() {
+        if (this.selectedArticles.size === 0) {
+            this.showNotification('请先选择要导出的文章', 'warning');
+            return;
+        }
+
+        const paths = Array.from(this.selectedArticles);
+        try {
+            const response = await fetch('/api/articles/export-zip', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ article_paths: paths })
+            });
+
+            if (!response.ok) {
+                const errData = await response.json().catch(() => ({}));
+                throw new Error(errData.detail || '导出请求失败');
+            }
+
+            const data = await response.json();
+            if (data.status === 'success' && data.download_url) {
+                window.open(data.download_url, '_blank');
+                this.showNotification(`已导出 ${paths.length} 篇文章`, 'success');
+            } else {
+                throw new Error('导出响应异常');
+            }
+        } catch (error) {
+            console.error('导出失败:', error);
+            this.showNotification('导出失败: ' + error.message, 'error');
+        }
     }  
     
     // HTML转义  

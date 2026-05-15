@@ -166,6 +166,9 @@ class UnifiedContentWorkflow:
 
             transform_content = self._transform_content(final_content, publish_platform, **kwargs)
 
+            # 3.5. 强制注入配图到文章HTML
+            transform_content = self._inject_images_into_html(transform_content, image_urls)
+
             # 4. 保存（非AI参与）
             log.print_log("[PROGRESS:SAVE:START]", "internal")
             save_result = self._save_content(transform_content, title)
@@ -316,14 +319,14 @@ class UnifiedContentWorkflow:
             return base_content
 
     def _fetch_images(self, topic: str, **kwargs) -> list:
-        """根据文章主题搜索配图，返回图片路径列表"""
+        """根据文章主题搜索配图，按优先级尝试多图源，返回图片路径列表"""
         config = Config.get_instance()
         if not config.image_search_enabled:
             return []
 
-        access_key = config.image_search_access_key
-        if not access_key:
-            log.print_log("未配置 Unsplash Access Key，跳过图片搜索", "warning")
+        image_config = config.image_search_config
+        sources = image_config.get("sources", ["unsplash"])
+        if not sources:
             return []
 
         count = kwargs.get("image_count") or config.image_search_count
@@ -334,13 +337,13 @@ class UnifiedContentWorkflow:
             from src.ai_write_x.tools.image_search import ImageSearchTool
 
             keyword = config.image_search_keyword or topic.split("|")[-1].strip()
-            searcher = ImageSearchTool(access_key)
+            searcher = ImageSearchTool(image_config)
             results = searcher.search(keyword, count)
 
             image_dir = PathManager.get_image_dir()
             local_paths = []
             for r in results:
-                path = searcher.download_image(r["url"], str(image_dir))
+                path = searcher.download_image(r["url"], str(image_dir), source=r.get("source", ""))
                 if path:
                     filename = Path(path).name
                     local_paths.append(f"/images/{filename}")
@@ -367,6 +370,25 @@ class UnifiedContentWorkflow:
         )
         if html_match:
             content = content[html_match.start():]
+
+        # 截断最后一个HTML闭合标签之后的所有内容（移除AI总结/确认文字）
+        last_html_close = None
+        for tag in ['</html>', '</body>', '</HTML>', '</BODY>']:
+            pos = content.rfind(tag)
+            if pos != -1:
+                last_html_close = max(last_html_close or -1, pos + len(tag))
+        if last_html_close and last_html_close < len(content):
+            after_html = content[last_html_close:].strip()
+            if after_html:
+                content = content[:last_html_close]
+
+        # 移除 "我已按照要求完成了以下工作" 等AI确认/总结段落
+        content = re.sub(
+            r'\n*我已按照要求完成了以下工作[：:][\s\S]*$', '', content
+        )
+        content = re.sub(
+            r'\n*我已(完成|按照要求).*?(工作|任务|要求)[：:][\s\S]*$', '', content
+        )
 
         # 移除 "Thought:" / "Thought：" 开头的思考块
         content = re.sub(
@@ -645,8 +667,47 @@ class UnifiedContentWorkflow:
 
         return True
 
+    def _inject_images_into_html(self, content: ContentResult, image_urls: list) -> ContentResult:
+        """将搜索到的配图强制注入到 HTML 文章中，确保每张图都被使用"""
+        if not image_urls or not content or not content.content:
+            return content
+
+        import re
+        html = content.content
+
+        # 图片卡片模板
+        def img_card(url, idx):
+            return f'''<figure style="margin:24px 0;text-align:center">
+<img src="{url}" alt="配图{idx}" style="max-width:100%;border-radius:12px;box-shadow:0 4px 16px rgba(0,0,0,0.1)"/>
+</figure>'''
+
+        # 找到所有 </section> 或 </div> 结束标签作为插入点
+        insert_points = []
+        for m in re.finditer(r'(</section>|</div>|</article>)', html, re.IGNORECASE):
+            insert_points.append(m.end())
+
+        if not insert_points:
+            # 没有结构标签，追加到末尾
+            imgs = "".join(img_card(url, i + 1) for i, url in enumerate(image_urls))
+            html = html + "\n" + imgs
+        else:
+            # 均匀分布：将图片插入到段落间隙
+            imgs = list(image_urls)
+            step = max(1, len(insert_points) // max(1, len(imgs)))
+            offset = 0
+            for i, url in enumerate(imgs):
+                idx = min(i * step, len(insert_points) - 1)
+                pos = insert_points[idx] + offset
+                card = img_card(url, i + 1)
+                html = html[:pos] + card + html[pos:]
+                offset += len(card)
+
+        content.content = html
+        log.print_log(f"已强制注入 {len(image_urls)} 张配图到文章")
+        return content
+
     def _persist_article_cover(self, article_path: str, image_urls: list) -> None:
-        """为文章保存封面图到 .design.json，确保发布时有封面可用"""
+        """为文章保存封面图到 .design.json，确保发布时有封面可用，裁剪为 1080x810"""
         import json
         from pathlib import Path
 
@@ -662,9 +723,11 @@ class UnifiedContentWorkflow:
         if design_data.get("cover"):
             return
 
-        # 优先使用搜索配图的第一张
+        # 优先使用搜索配图的第一张，裁剪为 1080x810
         if image_urls and len(image_urls) > 0:
-            design_data["cover"] = image_urls[0]
+            cover_url = image_urls[0]
+            cropped_path = self._crop_cover_image(cover_url, 1080, 810)
+            design_data["cover"] = cropped_path or cover_url
             design_path.write_text(json.dumps(design_data, ensure_ascii=False, indent=2), encoding="utf-8")
             log.print_log("已自动设置文章封面（来自搜索配图）")
             return
@@ -675,17 +738,73 @@ class UnifiedContentWorkflow:
         for cred in credentials:
             cover_path = cred.get("cover")
             if cover_path:
-                # 转换为绝对路径：凭证中存储的是相对 assets 目录的路径
                 import os
                 assets_dir = os.path.normpath(
                     os.path.join(os.path.dirname(__file__), "..", "assets")
                 )
                 abs_cover = os.path.join(assets_dir, cover_path)
                 if os.path.exists(abs_cover):
-                    design_data["cover"] = abs_cover
+                    cropped_path = self._crop_cover_image(abs_cover, 1080, 810)
+                    design_data["cover"] = cropped_path or abs_cover
                     design_path.write_text(json.dumps(design_data, ensure_ascii=False, indent=2), encoding="utf-8")
                     log.print_log("已自动设置文章封面（来自公众号默认封面）")
                     return
+
+    @staticmethod
+    def _crop_cover_image(image_src: str, target_w: int, target_h: int) -> str | None:
+        """将图片裁剪/缩放为目标尺寸（1080x810），返回新文件路径"""
+        try:
+            from PIL import Image
+
+            # 解析实际文件路径
+            src_path = image_src
+            if image_src.startswith("/images/"):
+                from src.ai_write_x.utils.path_manager import PathManager
+                src_path = str(PathManager.get_image_dir() / image_src.replace("/images/", ""))
+            elif not os.path.isabs(image_src):
+                src_path = os.path.abspath(image_src)
+
+            if not os.path.exists(src_path):
+                return None
+
+            img = Image.open(src_path)
+            src_w, src_h = img.size
+
+            # 计算裁剪区域（中心裁剪到目标比例）
+            target_ratio = target_w / target_h
+            src_ratio = src_w / src_h
+
+            if src_ratio > target_ratio:
+                # 原图更宽，裁剪左右
+                new_w = int(src_h * target_ratio)
+                new_h = src_h
+                left = (src_w - new_w) // 2
+                top = 0
+            else:
+                # 原图更高，裁剪上下
+                new_w = src_w
+                new_h = int(src_w / target_ratio)
+                left = 0
+                top = (src_h - new_h) // 2
+
+            cropped = img.crop((left, top, left + new_w, top + new_h))
+            resized = cropped.resize((target_w, target_h), Image.LANCZOS)
+
+            # 保存为新文件
+            cover_name = Path(src_path).stem + "_cover.jpg"
+            cover_dir = str(Path(src_path).parent)
+            cover_path = os.path.join(cover_dir, cover_name)
+            resized = resized.convert("RGB")
+            resized.save(cover_path, "JPEG", quality=90)
+
+            # 返回 Web 路径
+            if image_src.startswith("/images/"):
+                return f"/images/{cover_name}"
+            return cover_path
+
+        except Exception as e:
+            log.print_log(f"封面裁剪失败: {e}", "warning")
+            return None
 
     def get_performance_report(self) -> Dict[str, Any]:
         """获取性能报告"""

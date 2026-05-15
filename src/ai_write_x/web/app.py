@@ -86,8 +86,7 @@ templates_path = web_path / "templates"
 app.mount("/static", StaticFiles(directory=str(static_path)), name="static")
 app.mount("/images", StaticFiles(directory=PathManager.get_image_dir()), name="images")
 # 挂载资源目录，用于用户上传的自定义封面等
-assets_dir = web_path.parent / "assets" if not utils.get_is_release_ver() else Path(utils.get_res_path("assets"))
-app.mount("/assets", StaticFiles(directory=str(assets_dir)), name="assets")
+app.mount("/assets", StaticFiles(directory=str(PathManager.get_assets_dir())), name="assets")
 
 app.add_middleware(GZipMiddleware, minimum_size=1000)
 
@@ -101,12 +100,50 @@ app.include_router(articles_router)
 app.include_router(generate_router)
 
 
+def _is_license_activated():
+    """检查许可证是否已激活（避免循环导入）"""
+    try:
+        from src.ai_write_x.license.license_manager import LicenseManager
+        lm = LicenseManager()
+        return lm.is_activated()
+    except Exception:
+        return True  # 出错时放行，避免锁死用户
+
+
 @app.get("/", response_class=HTMLResponse)
 async def read_root(request: Request):
-    """返回主界面"""
+    """返回主界面（未激活重定向到激活页）"""
+    if not _is_license_activated():
+        return templates.TemplateResponse(
+            "activate.html", {"request": request}
+        )
     return templates.TemplateResponse(
         request, "index.html", {"request": request, "version": get_version_with_prefix()}
     )
+
+
+@app.get("/activate", response_class=HTMLResponse)
+async def activate_page(request: Request):
+    """激活页面"""
+    return templates.TemplateResponse(
+        "activate.html", {"request": request}
+    )
+
+
+@app.post("/api/license/activate")
+async def license_activate(request: Request):
+    """序列号激活接口"""
+    try:
+        body = await request.json()
+        serial = body.get("serial", "").strip()
+        if not serial:
+            return {"success": False, "message": "请输入序列号"}
+        from src.ai_write_x.license.license_manager import LicenseManager
+        lm = LicenseManager()
+        result = lm.activate(serial)
+        return result
+    except Exception as e:
+        return {"success": False, "message": f"激活异常: {str(e)}"}
 
 
 @app.get("/favicon.ico")

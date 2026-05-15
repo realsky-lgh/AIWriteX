@@ -1,6 +1,5 @@
 import os
 import glob
-import platform
 from pathlib import Path
 from src.ai_write_x.utils import utils
 
@@ -16,13 +15,9 @@ class PathManager:
             # 从当前文件位置回到项目根目录
             return Path(__file__).parent.parent.parent.parent
 
-        # 发布模式：使用系统用户数据目录
-        if platform.system() == "Darwin":  # macOS
-            return Path.home() / "Library/Application Support/AIWriteX"
-        elif platform.system() == "Windows":
-            return Path(os.environ.get("APPDATA", "")) / "AIWriteX"
-        else:  # Linux
-            return Path.home() / ".config/AIWriteX"
+        # 发布模式：使用 exe 所在目录（便携式，所有数据与 exe 同目录）
+        import sys
+        return Path(sys.executable).parent
 
     @staticmethod
     def get_config_dir():
@@ -70,6 +65,16 @@ class PathManager:
         image_dir = PathManager.get_app_data_dir() / "image"
         image_dir.mkdir(parents=True, exist_ok=True)
         return image_dir
+
+    @staticmethod
+    def get_assets_dir():
+        """获取资源文件目录（用户上传的封面等）"""
+        if not utils.get_is_release_ver():
+            return PathManager.get_app_data_dir() / "src/ai_write_x/assets"
+        else:
+            assets_dir = PathManager.get_app_data_dir() / "assets"
+            assets_dir.mkdir(parents=True, exist_ok=True)
+            return assets_dir
 
     @staticmethod
     def get_log_dir():

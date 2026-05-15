@@ -2,12 +2,16 @@ from datetime import datetime
 from pathlib import Path
 
 from fastapi import APIRouter, HTTPException
-from fastapi.responses import HTMLResponse, Response
+from fastapi.responses import HTMLResponse, Response, FileResponse
 from fastapi import File, UploadFile
 import uuid
 from pydantic import BaseModel
 from typing import List, Optional
 import json
+import time
+import zipfile
+import re
+from urllib.parse import unquote
 
 from src.ai_write_x.config.config import Config
 from src.ai_write_x.utils.path_manager import PathManager
@@ -26,6 +30,69 @@ class PublishRequest(BaseModel):
     article_paths: List[str]
     account_indices: List[int]
     platform: str = "wechat"
+
+
+class ExportRequest(BaseModel):
+    article_paths: List[str]
+
+
+@router.post("/export-zip")
+async def export_articles_zip(request: ExportRequest):
+    """批量导出文章为 ZIP，包含 HTML 文件和对应图片"""
+    try:
+        articles_dir = PathManager.get_article_dir()
+        image_dir = PathManager.get_image_dir()
+
+        # 使用 temp 目录存放临时 ZIP 文件
+        temp_dir = PathManager.get_temp_dir()
+        zip_filename = f"articles_export_{int(time.time())}.zip"
+        zip_path = temp_dir / zip_filename
+
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for article_path_str in request.article_paths:
+                file_path = Path(article_path_str)
+                if not file_path.exists():
+                    continue
+
+                article_name = file_path.stem
+                content = file_path.read_text(encoding="utf-8")
+
+                # 收集文章引用的本地图片
+                img_pattern = re.compile(r'src=["\'](/images/[^"\']+)["\']')
+                referenced_images = set()
+                for m in img_pattern.finditer(content):
+                    img_path = m.group(1).lstrip("/")
+                    referenced_images.add(Path(img_path).name)
+
+                # 写入 HTML 文件
+                zip_entry = f"{article_name}/{article_name}.html"
+                zf.writestr(zip_entry, content)
+
+                # 写入对应图片
+                for img_name in referenced_images:
+                    img_file = image_dir / img_name
+                    if img_file.exists():
+                        zip_entry = f"{article_name}/images/{img_name}"
+                        zf.write(img_file, zip_entry)
+
+        return {"status": "success", "download_url": f"/api/articles/download-zip/{zip_filename}"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/download-zip/{filename}")
+async def download_zip(filename: str):
+    """下载已生成的 ZIP 文件"""
+    temp_dir = PathManager.get_temp_dir()
+    zip_path = temp_dir / filename
+    if not zip_path.exists():
+        raise HTTPException(status_code=404, detail="ZIP 文件不存在或已过期")
+    return FileResponse(
+        zip_path,
+        media_type="application/zip",
+        filename="articles_export.zip",
+        headers={"Content-Disposition": "attachment; filename=articles_export.zip"},
+    )
 
 
 @router.get("/")
@@ -369,12 +436,16 @@ class ArticleDesign(BaseModel):
 
 @router.post("/design")
 async def save_article_design(design: ArticleDesign):
-    """保存文章设计(包括封面)"""
+    """保存文章设计(包括封面)，封面自动裁剪为 1080x810"""
     try:
         article_path = Path(design.article)
         design_path = article_path.with_suffix(".design.json")
 
-        design_data = {"html": design.html, "css": design.css, "cover": design.cover}  # 保存封面
+        cover = design.cover
+        if cover:
+            cover = _crop_cover_to_1080x810(cover)
+
+        design_data = {"html": design.html, "css": design.css, "cover": cover}
 
         with open(design_path, "w", encoding="utf-8") as f:
             json.dump(design_data, f, ensure_ascii=False, indent=2)
@@ -382,6 +453,54 @@ async def save_article_design(design: ArticleDesign):
         return {"success": True, "message": "设计已保存"}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
+
+
+def _crop_cover_to_1080x810(image_src: str) -> str:
+    """将封面图裁剪/缩放为 1080x810"""
+    try:
+        from PIL import Image
+
+        src_path = image_src
+        if image_src.startswith("/images/"):
+            from src.ai_write_x.utils.path_manager import PathManager
+            src_path = str(PathManager.get_image_dir() / image_src.replace("/images/", ""))
+        elif not os.path.isabs(image_src):
+            src_path = os.path.abspath(image_src)
+
+        if not os.path.exists(src_path):
+            return image_src  # 文件不存在，返回原路径
+
+        img = Image.open(src_path)
+        src_w, src_h = img.size
+        target_w, target_h = 1080, 810
+        target_ratio = target_w / target_h
+        src_ratio = src_w / src_h
+
+        if src_ratio > target_ratio:
+            new_w = int(src_h * target_ratio)
+            new_h = src_h
+            left = (src_w - new_w) // 2
+            top = 0
+        else:
+            new_w = src_w
+            new_h = int(src_w / target_ratio)
+            left = 0
+            top = (src_h - new_h) // 2
+
+        cropped = img.crop((left, top, left + new_w, top + new_h))
+        resized = cropped.resize((target_w, target_h), Image.LANCZOS)
+
+        cover_name = Path(src_path).stem + "_cover.jpg"
+        cover_dir = str(Path(src_path).parent)
+        cover_path = os.path.join(cover_dir, cover_name)
+        resized = resized.convert("RGB")
+        resized.save(cover_path, "JPEG", quality=90)
+
+        if image_src.startswith("/images/"):
+            return f"/images/{cover_name}"
+        return cover_path
+    except Exception:
+        return image_src  # 裁剪失败时返回原图
 
 
 @router.get("/design")

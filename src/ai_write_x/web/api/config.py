@@ -2,6 +2,8 @@
 # -*- coding: UTF-8 -*-
 
 import json
+import os
+import sys
 import time
 from pathlib import Path
 from typing import Dict, Any
@@ -241,49 +243,134 @@ async def get_help_manual():
 
 @router.get("/check-updates")
 async def check_for_updates():
-    """检查GitHub是否有新版本（仅在启动时调用）"""
+    """检查新版本：优先从国内VPS获取，失败则回退到GitHub。便携版跳过。"""
+    # 便携版不支持自动更新（未通过 NSIS 安装，无注册表项）
+    if not _is_installed_version():
+        return {"status": "ok", "has_update": False, "portable": True}
+
     current_version = get_version()
 
+    # 国内优先：从自有VPS获取更新信息
+    vps_url = "http://66.154.119.3/update/version.json"
+    github_url = "https://api.github.com/repos/iniwap/AIWriteX/releases/latest"
+
+    for url in (vps_url, github_url):
+        try:
+            headers = {"User-Agent": "AIWriteX-Client/1.0"}
+            if "github" in url:
+                headers["Accept"] = "application/vnd.github.v3+json"
+
+            response = requests.get(url, timeout=8, headers=headers)
+
+            if response.status_code == 200:
+                data = response.json()
+
+                if "github" in url:
+                    latest_version = data["tag_name"].lstrip("Vv")
+                    download_url = data["assets"][0]["browser_download_url"] if data.get("assets") else ""
+                    release_notes = data.get("body", "")
+                else:
+                    latest_version = data.get("version", "")
+                    download_url = data.get("download_url", "")
+                    release_notes = data.get("release_notes", "")
+
+                return {
+                    "status": "success",
+                    "has_update": version.parse(latest_version) > version.parse(current_version),
+                    "current_version": current_version,
+                    "latest_version": latest_version,
+                    "download_url": download_url,
+                    "release_notes": release_notes,
+                }
+        except Exception:
+            continue
+
+    return {"status": "error", "has_update": False, "current_version": current_version}
+
+
+def _is_installed_version() -> bool:
+    """通过 NSIS 写入的注册表项判断是否为安装版"""
     try:
-        headers = {"User-Agent": "AIWriteX-Client/1.0", "Accept": "application/vnd.github.v3+json"}
-
-        response = requests.get(
-            "https://api.github.com/repos/iniwap/AIWriteX/releases/latest",
-            timeout=5,
-            headers=headers,
+        import winreg
+        key = winreg.OpenKey(
+            winreg.HKEY_LOCAL_MACHINE,
+            r"Software\Microsoft\Windows\CurrentVersion\Uninstall\AIWriteX"
         )
-
-        if response.status_code == 200:
-            data = response.json()
-            latest_version = data["tag_name"].lstrip("Vv")
-            return {
-                "status": "success",
-                "has_update": version.parse(latest_version) > version.parse(current_version),
-                "current_version": current_version,
-                "latest_version": latest_version,
-                "download_url": (
-                    data["assets"][0]["browser_download_url"] if data.get("assets") else ""
-                ),
-                "release_notes": data.get("body", ""),
-                # "release_url": data["html_url"],
-            }
-        elif response.status_code == 403:
-            # 速率限制，静默处理
-            return {
-                "status": "rate_limited",
-                "has_update": False,
-                "current_version": current_version,
-            }
-        else:
-            return {"status": "error", "has_update": False, "current_version": current_version}
-
-    except Exception:
-        # 任何错误都静默处理，不影响启动
-        return {"status": "error", "has_update": False, "current_version": current_version}
+        winreg.CloseKey(key)
+        return True
+    except OSError:
+        return False
 
 
 class URLRequest(BaseModel):
     url: str
+
+
+# ── 自动更新 ──────────────────────────────────────────
+
+_update_download_path = None
+
+
+@router.post("/download-update")
+async def download_update(request: URLRequest):
+    """下载新版本安装包到临时目录，返回下载进度"""
+    global _update_download_path
+    import tempfile
+    from pathlib import Path as P
+
+    try:
+        url = request.url
+        if not url:
+            raise HTTPException(status_code=400, detail="缺少下载地址")
+
+        # 下载到临时目录
+        tmp_dir = P(tempfile.gettempdir()) / "AIWriteX_Update"
+        tmp_dir.mkdir(exist_ok=True)
+
+        filename = url.split("/")[-1] or "AIWriteX_Setup.exe"
+        save_path = tmp_dir / filename
+
+        # 流式下载
+        resp = requests.get(url, stream=True, timeout=300)
+        resp.raise_for_status()
+
+        total = int(resp.headers.get("content-length", 0))
+        downloaded = 0
+        with open(save_path, "wb") as f:
+            for chunk in resp.iter_content(chunk_size=8192):
+                f.write(chunk)
+                downloaded += len(chunk)
+
+        _update_download_path = str(save_path)
+        return {
+            "status": "success",
+            "path": str(save_path),
+            "size": downloaded,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"下载失败: {str(e)}")
+
+
+@router.post("/install-update")
+async def install_update():
+    """运行已下载的安装程序"""
+    global _update_download_path
+    import subprocess
+
+    if not _update_download_path or not os.path.exists(_update_download_path):
+        raise HTTPException(status_code=400, detail="未找到下载的安装包，请先下载")
+
+    try:
+        if sys.platform == "win32":
+            # DETACHED_PROCESS 确保安装程序在父进程退出后继续运行
+            subprocess.Popen(
+                f'"{_update_download_path}" /S',
+                shell=True,
+                creationflags=subprocess.DETACHED_PROCESS | subprocess.CREATE_NEW_PROCESS_GROUP,
+            )
+        return {"status": "success", "message": "安装程序已启动，应用将自动关闭"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"启动安装程序失败: {str(e)}")
 
 
 @router.post("/open-url")
@@ -311,9 +398,7 @@ async def upload_cover(file: UploadFile = File(...)):
 
         # 保存到 assets/UI 目录
         import os
-        web_dir = Path(__file__).parent.parent  # web/
-        src_dir = web_dir.parent  # src/ai_write_x/
-        assets_dir = src_dir / "assets" / "UI"
+        assets_dir = PathManager.get_assets_dir() / "UI"
         assets_dir.mkdir(parents=True, exist_ok=True)
 
         # 生成唯一文件名
